@@ -88,7 +88,7 @@ pub const Node = struct {
 pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!?Ast {
     if (source.len == 0) return null;
 
-    var ast = Ast{
+    var ast: Ast = .{
         .source = source,
         .tokens = undefined,
         .nodes = undefined,

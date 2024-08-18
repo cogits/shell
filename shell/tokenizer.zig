@@ -58,7 +58,7 @@ pub const Tokenizer = struct {
     }
 
     pub fn next(self: *Tokenizer) Token {
-        var result = Token{
+        var result: Token = .{
             .tag = .eof,
             .lexeme = "\\n",
         };
