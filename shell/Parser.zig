@@ -6,7 +6,7 @@ const Allocator = std.mem.Allocator;
 const Ast = @import("Ast.zig");
 const Node = Ast.Node;
 const Parser = @This();
-const Token = @import("tokenizer.zig").Token;
+const Token = @import("Tokenizer.zig").Token;
 const TokenIndex = Ast.TokenIndex;
 
 pub const Error = error{ParseError} || Allocator.Error;

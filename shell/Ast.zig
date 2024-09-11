@@ -3,8 +3,8 @@ const assert = std.debug.assert;
 const Ast = @This();
 const Allocator = std.mem.Allocator;
 const Parser = @import("Parser.zig");
-const Token = @import("tokenizer.zig").Token;
-const Tokenizer = @import("tokenizer.zig").Tokenizer;
+const Tokenizer = @import("Tokenizer.zig");
+const Token = Tokenizer.Token;
 
 /// Reference to externally-owned data.
 source: [:0]const u8,

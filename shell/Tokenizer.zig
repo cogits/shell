@@ -1,4 +1,70 @@
+const Tokenizer = @This();
 const std = @import("std");
+
+index: usize,
+buffer: [:0]const u8,
+
+const whitespace = " \t\r\n\x0b";
+const symbols = "<|>&;()";
+
+pub fn init(buffer: [:0]const u8) Tokenizer {
+    return Tokenizer{
+        .buffer = buffer,
+        .index = 0,
+    };
+}
+
+pub fn next(self: *Tokenizer) Token {
+    var result: Token = .{
+        .tag = .eof,
+        .lexeme = "\\n",
+    };
+
+    // skip whitespace
+    while (self.index < self.buffer.len) {
+        switch (self.buffer[self.index]) {
+            ' ', '\n', '\t', '\r', '\x0b' => self.index += 1,
+            else => break,
+        }
+    }
+
+    var tag: ?Token.Tag = null;
+    const end: usize = switch (self.buffer[self.index]) {
+        0 => return result,
+        '\'', '"' => |char| blk: {
+            if (self.buffer[self.index + 1] != 0) {
+                if (std.mem.indexOfScalar(u8, self.buffer[self.index + 1 ..], char)) |end| {
+                    tag = .string;
+                    self.index += 1;
+                    break :blk end;
+                }
+            }
+
+            tag = .invalid;
+            break :blk if (std.mem.indexOfAny(u8, self.buffer[self.index + 1 ..], whitespace)) |index|
+                index + 1
+            else
+                self.buffer.len - self.index;
+        },
+        ';', '&', '|', '<', '(', ')' => 1,
+        '>' => if (self.buffer[self.index + 1] == '>') 2 else 1,
+        else => |char| if (char == '2' and self.buffer[self.index + 1] == '>')
+            if (self.buffer[self.index + 2] == '>')
+                3
+            else
+                2
+        else
+            std.mem.indexOfAny(u8, self.buffer[self.index..], whitespace ++ symbols) orelse
+                self.buffer.len - self.index,
+    };
+
+    result.lexeme = self.buffer[self.index .. self.index + end];
+    self.index += if (tag == .string) end + 1 else end;
+    result.tag = tag orelse Token.symbols.get(result.lexeme) orelse
+        Token.builtins.get(result.lexeme) orelse .string;
+
+    return result;
+}
 
 pub const Token = struct {
     tag: Tag,
@@ -40,73 +106,6 @@ pub const Token = struct {
 
     pub fn format(self: Token, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
         try w.print("'{s}' :: {s}", .{ self.lexeme, @tagName(self.tag) });
-    }
-};
-
-pub const Tokenizer = struct {
-    index: usize,
-    buffer: [:0]const u8,
-
-    const whitespace = " \t\r\n\x0b";
-    const symbols = "<|>&;()";
-
-    pub fn init(buffer: [:0]const u8) Tokenizer {
-        return Tokenizer{
-            .buffer = buffer,
-            .index = 0,
-        };
-    }
-
-    pub fn next(self: *Tokenizer) Token {
-        var result: Token = .{
-            .tag = .eof,
-            .lexeme = "\\n",
-        };
-
-        // skip whitespace
-        while (self.index < self.buffer.len) {
-            switch (self.buffer[self.index]) {
-                ' ', '\n', '\t', '\r', '\x0b' => self.index += 1,
-                else => break,
-            }
-        }
-
-        var tag: ?Token.Tag = null;
-        const end: usize = switch (self.buffer[self.index]) {
-            0 => return result,
-            '\'', '"' => |char| blk: {
-                if (self.buffer[self.index + 1] != 0) {
-                    if (std.mem.indexOfScalar(u8, self.buffer[self.index + 1 ..], char)) |end| {
-                        tag = .string;
-                        self.index += 1;
-                        break :blk end;
-                    }
-                }
-
-                tag = .invalid;
-                break :blk if (std.mem.indexOfAny(u8, self.buffer[self.index + 1 ..], whitespace)) |index|
-                    index + 1
-                else
-                    self.buffer.len - self.index;
-            },
-            ';', '&', '|', '<', '(', ')' => 1,
-            '>' => if (self.buffer[self.index + 1] == '>') 2 else 1,
-            else => |char| if (char == '2' and self.buffer[self.index + 1] == '>')
-                if (self.buffer[self.index + 2] == '>')
-                    3
-                else
-                    2
-            else
-                std.mem.indexOfAny(u8, self.buffer[self.index..], whitespace ++ symbols) orelse
-                    self.buffer.len - self.index,
-        };
-
-        result.lexeme = self.buffer[self.index .. self.index + end];
-        self.index += if (tag == .string) end + 1 else end;
-        result.tag = tag orelse Token.symbols.get(result.lexeme) orelse
-            Token.builtins.get(result.lexeme) orelse .string;
-
-        return result;
     }
 };
 
