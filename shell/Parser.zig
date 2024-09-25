@@ -212,17 +212,26 @@ fn parseExec(p: *Parser) !Node.Index {
     if (p.eatToken(.l_paren)) |_| return p.parseBlock();
     const start = p.eatToken(.string) orelse
         p.eatToken(.builtin_cd) orelse
+        p.eatToken(.builtin_exit) orelse
         return error.ParseError;
 
     while (true) : (p.tok_i += 1) {
         switch (p.token_tags[p.tok_i]) {
-            .string, .builtin_cd => continue,
+            .string,
+            .builtin_cd,
+            .builtin_exit,
+            => continue,
             else => break,
         }
     }
 
     return p.addNode(.{
-        .tag = if (p.token_tags[start] == .builtin_cd) .builtin else .exec,
+        .tag = switch (p.token_tags[start]) {
+            .builtin_cd,
+            .builtin_exit,
+            => .builtin,
+            else => .exec,
+        },
         .data = .{
             .lhs = start,
             .rhs = p.tok_i,

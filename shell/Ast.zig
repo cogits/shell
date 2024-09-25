@@ -4,7 +4,7 @@ const Ast = @This();
 const Allocator = std.mem.Allocator;
 const Parser = @import("Parser.zig");
 const Tokenizer = @import("Tokenizer.zig");
-const Token = Tokenizer.Token;
+pub const Token = Tokenizer.Token;
 
 /// Reference to externally-owned data.
 source: [:0]const u8,
@@ -305,6 +305,10 @@ test "parse" {
     try testParse(
         "cd cd",
         "cd cd",
+    );
+    try testParse(
+        "cd exit",
+        "cd exit",
     );
     try testParse(
         "   ",

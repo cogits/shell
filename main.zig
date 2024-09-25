@@ -1,5 +1,6 @@
 const std = @import("std");
 const Ast = @import("Ast");
+const String = []const u8;
 const posix = std.posix;
 const print = std.debug.print;
 
@@ -74,29 +75,44 @@ fn runcmd(ast: Ast, index: Ast.Node.Index) CmdError!void {
                 }
             }
         },
-        .builtin => {
-            // chdir must be called by the parent, not the child.
-            const tokens = ast.tokens.items(.lexeme)[node.data.lhs..node.data.rhs];
-            const path = try allocator.dupeZ(u8, tokens[1]);
-            defer allocator.free(path);
-            posix.chdir(path) catch |err|
-                print("cannot cd {s}: {s}\n", .{ path, @errorName(err) });
-        },
         .back => {
             if (try posix.fork() == 0) try runcmd(ast, node.data.lhs);
             posix.exit(0); // Let parent exit before child.
         },
-        .exec => try execute(ast, node),
+        .builtin => {
+            const tokens = ast.tokens.items(.lexeme)[node.data.lhs + 1 .. node.data.rhs];
+            try builtin(ast.tokens.get(0).tag, tokens);
+        },
+        .exec => {
+            const tokens = ast.tokens.items(.lexeme)[node.data.lhs..node.data.rhs];
+            try execute(tokens);
+        },
         .pipe => try pipe(ast, node),
         .redir, .redir_pipe => try redirect(ast, node),
         else => unreachable,
     }
 }
 
-fn execute(ast: Ast, node: Ast.Node) error{ Overflow, OutOfMemory }!void {
+fn builtin(tag: Ast.Token.Tag, tokens: []const String) error{OutOfMemory}!void {
+    switch (tag) {
+        .builtin_cd => {
+            // chdir must be called by the parent, not the child.
+            const path = try allocator.dupeZ(u8, tokens[0]);
+            defer allocator.free(path);
+            posix.chdir(path) catch |err|
+                print("cannot cd {s}: {s}\n", .{ path, @errorName(err) });
+        },
+        .builtin_exit => {
+            const n = if (tokens.len == 0) 0 else std.fmt.parseInt(u8, tokens[0], 0) catch 1;
+            posix.exit(n);
+        },
+        else => unreachable,
+    }
+}
+
+fn execute(tokens: []const String) error{ Overflow, OutOfMemory }!void {
     var list = std.BoundedArray(?[*:0]const u8, MAXARG){};
 
-    const tokens = ast.tokens.items(.lexeme)[node.data.lhs..node.data.rhs];
     for (tokens) |token| {
         try list.append(try allocator.dupeZ(u8, token));
     }
