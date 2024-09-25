@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     const ast_module = b.addModule("shell", .{
-        .root_source_file = b.path("shell/Ast.zig"),
+        .root_source_file = b.path("Ast/Ast.zig"),
     });
 
     const shell = b.addExecutable(.{
@@ -44,7 +44,7 @@ pub fn build(b: *std.Build) !void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const lib_unit_tests = b.addTest(.{
-        .root_source_file = b.path("shell/Ast.zig"),
+        .root_source_file = b.path("Ast/Ast.zig"),
         .target = target,
         .optimize = optimize,
     });

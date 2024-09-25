@@ -14,10 +14,8 @@ const color = struct {
     const reset = "\x1b[0m";
 };
 
-const CmdError = error{
-    Overflow,
-    OutOfMemory,
-} || posix.ForkError || posix.PipeError ||
+const CmdError = error{ Overflow, OutOfMemory } ||
+    posix.ForkError || posix.PipeError ||
     posix.OpenError || posix.ReadError || posix.WriteError;
 
 var arena_allocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -80,8 +78,8 @@ fn runcmd(ast: Ast, index: Ast.Node.Index) CmdError!void {
             posix.exit(0); // Let parent exit before child.
         },
         .builtin => {
-            const tokens = ast.tokens.items(.lexeme)[node.data.lhs + 1 .. node.data.rhs];
-            try builtin(ast.tokens.get(0).tag, tokens);
+            const tokens = ast.tokens.items(.lexeme)[node.data.lhs..node.data.rhs];
+            try builtin(Ast.Node.builtins.get(tokens[0]).?, tokens[1..]);
         },
         .exec => {
             const tokens = ast.tokens.items(.lexeme)[node.data.lhs..node.data.rhs];
@@ -93,20 +91,18 @@ fn runcmd(ast: Ast, index: Ast.Node.Index) CmdError!void {
     }
 }
 
-fn builtin(tag: Ast.Token.Tag, tokens: []const String) error{OutOfMemory}!void {
+fn builtin(tag: Ast.Node.Builtin, tokens: []const String) error{OutOfMemory}!void {
     switch (tag) {
-        .builtin_cd => {
-            // chdir must be called by the parent, not the child.
+        .cd => {
             const path = try allocator.dupeZ(u8, tokens[0]);
             defer allocator.free(path);
             posix.chdir(path) catch |err|
                 print("cannot cd {s}: {s}\n", .{ path, @errorName(err) });
         },
-        .builtin_exit => {
+        .exit => {
             const n = if (tokens.len == 0) 0 else std.fmt.parseInt(u8, tokens[0], 0) catch 1;
             posix.exit(n);
         },
-        else => unreachable,
     }
 }
 

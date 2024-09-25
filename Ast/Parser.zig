@@ -13,8 +13,9 @@ pub const Error = error{ParseError} || Allocator.Error;
 
 gpa: Allocator,
 source: []const u8,
-token_tags: []const Token.Tag,
 tok_i: TokenIndex,
+token_tags: []const Token.Tag,
+token_lexemes: []const Token.Lexeme,
 nodes: Ast.NodeList,
 extra_data: std.ArrayListUnmanaged(Node.Index),
 scratch: std.ArrayListUnmanaged(Node.Index),
@@ -189,7 +190,8 @@ fn parseFiles(p: *Parser) !Node.SubRange {
             .stderr_append_redir,
             => {
                 p.tok_i += 1;
-                try p.scratch.append(p.gpa, p.eatToken(.string) orelse return error.ParseError);
+                const file = p.eatToken(.string) orelse return error.ParseError;
+                try p.scratch.append(p.gpa, file);
             },
             else => break,
         }
@@ -210,28 +212,17 @@ fn parseFiles(p: *Parser) !Node.SubRange {
 
 fn parseExec(p: *Parser) !Node.Index {
     if (p.eatToken(.l_paren)) |_| return p.parseBlock();
-    const start = p.eatToken(.string) orelse
-        p.eatToken(.builtin_cd) orelse
-        p.eatToken(.builtin_exit) orelse
-        return error.ParseError;
+    const start = p.eatToken(.string) orelse return error.ParseError;
 
     while (true) : (p.tok_i += 1) {
         switch (p.token_tags[p.tok_i]) {
-            .string,
-            .builtin_cd,
-            .builtin_exit,
-            => continue,
+            .string => continue,
             else => break,
         }
     }
 
     return p.addNode(.{
-        .tag = switch (p.token_tags[start]) {
-            .builtin_cd,
-            .builtin_exit,
-            => .builtin,
-            else => .exec,
-        },
+        .tag = if (Node.builtins.has(p.token_lexemes[start])) .builtin else .exec,
         .data = .{
             .lhs = start,
             .rhs = p.tok_i,

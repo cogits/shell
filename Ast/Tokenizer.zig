@@ -60,15 +60,14 @@ pub fn next(self: *Tokenizer) Token {
 
     result.lexeme = self.buffer[self.index .. self.index + end];
     self.index += if (tag == .string) end + 1 else end;
-    result.tag = tag orelse Token.symbols.get(result.lexeme) orelse
-        Token.builtins.get(result.lexeme) orelse .string;
+    result.tag = tag orelse Token.symbols.get(result.lexeme) orelse .string;
 
     return result;
 }
 
 pub const Token = struct {
     tag: Tag,
-    lexeme: []const u8,
+    lexeme: Lexeme,
 
     pub const symbols = std.StaticStringMap(Tag).initComptime(.{
         .{ "(", .l_paren },
@@ -83,16 +82,10 @@ pub const Token = struct {
         .{ "2>>", .stderr_append_redir },
     });
 
-    pub const builtins = std.StaticStringMap(Tag).initComptime(.{
-        .{ "cd", .builtin_cd },
-        .{ "exit", .builtin_exit },
-    });
-
+    pub const Lexeme = []const u8;
     pub const Tag = enum {
         eof,
         invalid,
-        builtin_cd,
-        builtin_exit,
         string,
         l_paren,
         r_paren,
@@ -125,8 +118,6 @@ fn testTokenize(source: [:0]const u8, expected_token_tags: []const Token.Tag) !v
 }
 
 test "tokenizer" {
-    try testTokenize("cd .", &.{ .builtin_cd, .string });
-    try testTokenize("exit", &.{.builtin_exit});
     try testTokenize("echo 2", &.{ .string, .string });
     try testTokenize(">_<", &.{ .stdout_redir, .string, .stdin_redir });
 

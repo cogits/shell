@@ -4,7 +4,7 @@ const Ast = @This();
 const Allocator = std.mem.Allocator;
 const Parser = @import("Parser.zig");
 const Tokenizer = @import("Tokenizer.zig");
-pub const Token = Tokenizer.Token;
+const Token = Tokenizer.Token;
 
 /// Reference to externally-owned data.
 source: [:0]const u8,
@@ -42,9 +42,19 @@ pub const Node = struct {
         files,
         /// `cmd arg1 arg2...`, tokens[lhs...rhs]
         exec,
-        /// builtin cmds
+        /// builtin command
         builtin,
     };
+
+    pub const Builtin = enum {
+        cd,
+        exit,
+    };
+
+    pub const builtins = std.StaticStringMap(Builtin).initComptime(.{
+        .{ "cd", .cd },
+        .{ "exit", .exit },
+    });
 
     pub const Data = struct {
         lhs: Index,
@@ -118,11 +128,12 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!?Ast {
     var parser: Parser = .{
         .source = source,
         .gpa = gpa,
+        .tok_i = 0,
         .token_tags = tokens.items(.tag),
+        .token_lexemes = tokens.items(.lexeme),
         .nodes = .{},
         .extra_data = .{},
         .scratch = .{},
-        .tok_i = 0,
     };
     defer parser.deinit();
 
