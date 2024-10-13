@@ -14,7 +14,7 @@ const color = struct {
     const reset = "\x1b[0m";
 };
 
-const CmdError = error{ Overflow, OutOfMemory } ||
+const CmdError = error{OutOfMemory} ||
     posix.ForkError || posix.PipeError ||
     posix.OpenError || posix.ReadError || posix.WriteError;
 
@@ -23,30 +23,23 @@ const allocator = arena_allocator.allocator();
 
 pub fn main() !void {
     while (true) {
-        try run();
+        _ = arena_allocator.reset(.retain_capacity);
+
+        print(color.yellow ++ "$ " ++ color.reset, .{});
+        const cmd = try getcmd();
+        var tree = try Ast.parse(allocator, cmd) orelse continue;
+        defer tree.deinit(allocator);
+
+        if (tree.error_token != null) {
+            const error_token = tree.error_token.?;
+            const position = @intFromPtr(error_token.ptr) - @intFromPtr(tree.source.ptr);
+            print("{s:[2]}{s:~<[3]}\n", .{ "", "^", position + 2, error_token.len });
+            print("sh: parse error near `{s}'\n", .{error_token});
+            continue;
+        }
+
+        try runcmd(tree, 0);
     }
-}
-
-fn run() !void {
-    _ = arena_allocator.reset(.retain_capacity);
-
-    print(color.yellow ++ "$ " ++ color.reset, .{});
-    const cmd = try getcmd();
-    var tree = try Ast.parse(allocator, cmd) orelse return;
-    defer tree.deinit(allocator);
-
-    if (tree.error_token != null) {
-        const error_token = tree.error_token.?;
-        const position = @intFromPtr(error_token.ptr) - @intFromPtr(tree.source.ptr);
-        print("{s:[2]}{s:~<[3]}\n", .{ "", "^", position + 2, error_token.len });
-        print("sh: parse error near `{s}'\n", .{error_token});
-        return;
-    }
-
-    runcmd(tree, 0) catch |err| switch (err) {
-        error.Overflow => print("sh: too many args\n", .{}),
-        else => return err,
-    };
 }
 
 fn getcmd() ![:0]u8 {
@@ -78,15 +71,27 @@ fn runcmd(ast: Ast, index: Ast.Node.Index) CmdError!void {
             posix.exit(0); // Let parent exit before child.
         },
         .builtin => {
+            // builtins must be called by the parent, not the child.
             const tokens = ast.tokens.items(.lexeme)[node.data.lhs..node.data.rhs];
             try builtin(Ast.Node.builtins.get(tokens[0]).?, tokens[1..]);
         },
         .exec => {
             const tokens = ast.tokens.items(.lexeme)[node.data.lhs..node.data.rhs];
-            try execute(tokens);
+            execute(tokens) catch |err| switch (err) {
+                error.Overflow => print("sh: too many args\n", .{}),
+                error.FileNotFound => print("{s}: command not found\n", .{tokens[0]}),
+                else => |e| print("exec {s} failed: {s}\n", .{ tokens[0], @errorName(e) }),
+            };
+            posix.exit(1);
         },
-        .pipe => try pipe(ast, node),
-        .redir, .redir_pipe => try redirect(ast, node),
+        .pipe => {
+            try pipe(ast, node);
+            posix.exit(0);
+        },
+        .redir, .redir_pipe => {
+            try redirect(ast, node);
+            posix.exit(0);
+        },
         else => unreachable,
     }
 }
@@ -106,7 +111,7 @@ fn builtin(tag: Ast.Node.Builtin, tokens: []const String) error{OutOfMemory}!voi
     }
 }
 
-fn execute(tokens: []const String) error{ Overflow, OutOfMemory }!void {
+fn execute(tokens: []const String) !void {
     var list: std.BoundedArray(?[*:0]const u8, MAXARG + 2) = .{};
 
     for (tokens) |token| {
@@ -115,13 +120,7 @@ fn execute(tokens: []const String) error{ Overflow, OutOfMemory }!void {
     try list.append(null);
 
     const argv = list.slice();
-    const err = posix.execvpeZ(argv[0].?, @ptrCast(argv), @ptrCast(std.os.environ.ptr));
-    switch (err) {
-        error.FileNotFound => print("{s}: command not found\n", .{argv[0].?}),
-        else => |e| print("sh: exec {s} failed: {s}\n", .{ argv[0].?, @errorName(e) }),
-    }
-
-    posix.exit(0);
+    return posix.execvpeZ(argv[0].?, @ptrCast(argv), @ptrCast(std.os.environ.ptr));
 }
 
 fn pipe(ast: Ast, node: Ast.Node) !void {
@@ -142,7 +141,6 @@ fn pipe(ast: Ast, node: Ast.Node) !void {
     posix.close(p[1]);
     _ = posix.waitpid(0, 0);
     _ = posix.waitpid(0, 0);
-    posix.exit(0);
 }
 
 fn redirect(ast: Ast, node: Ast.Node) !void {
@@ -249,5 +247,4 @@ fn redirect(ast: Ast, node: Ast.Node) !void {
     }
 
     _ = posix.waitpid(0, 0);
-    posix.exit(0);
 }
