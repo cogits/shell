@@ -107,7 +107,7 @@ fn builtin(tag: Ast.Node.Builtin, tokens: []const String) error{OutOfMemory}!voi
 }
 
 fn execute(tokens: []const String) error{ Overflow, OutOfMemory }!void {
-    var list = std.BoundedArray(?[*:0]const u8, MAXARG){};
+    var list: std.BoundedArray(?[*:0]const u8, MAXARG + 2) = .{};
 
     for (tokens) |token| {
         try list.append(try allocator.dupeZ(u8, token));
