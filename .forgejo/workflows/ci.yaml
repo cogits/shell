@@ -1,0 +1,12 @@
+on: [push]
+jobs:
+  test:
+    runs-on: codeberg-tiny
+    steps:
+      - name: Check out
+        uses: https://github.com/actions/checkout@v4
+      - name: Install Zig
+        uses: https://github.com/mlugg/setup-zig@v1
+      - name: Build shell
+        run: |
+          zig build release --summary all
