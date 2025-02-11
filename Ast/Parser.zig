@@ -54,7 +54,7 @@ fn parseCmdLine(p: *Parser) !Node.Index {
     const list_range = try p.parseList();
     switch (list_range.end - list_range.start) {
         0 => return error.ParseError,
-        1 => return p.extra_data.pop(),
+        1 => return p.extra_data.pop().?,
         else => {},
     }
 
