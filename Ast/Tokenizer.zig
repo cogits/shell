@@ -8,7 +8,7 @@ const whitespace = " \t\r\n\x0b";
 const symbols = "<|>&;()";
 
 pub fn init(buffer: [:0]const u8) Tokenizer {
-    return Tokenizer{
+    return .{
         .buffer = buffer,
         .index = 0,
     };
@@ -69,17 +69,17 @@ pub const Token = struct {
     tag: Tag,
     lexeme: Lexeme,
 
-    pub const symbols = std.StaticStringMap(Tag).initComptime(.{
+    pub const symbols: std.StaticStringMap(Tag) = .initComptime(.{
         .{ "(", .l_paren },
         .{ ")", .r_paren },
         .{ ";", .semicolon },
         .{ "&", .ampersand },
         .{ "|", .pipe },
-        .{ "<", .stdin_redir },
-        .{ ">", .stdout_redir },
-        .{ ">>", .stdout_append_redir },
-        .{ "2>", .stderr_redir },
-        .{ "2>>", .stderr_append_redir },
+        .{ "<", .stdin },
+        .{ ">", .stdout },
+        .{ ">>", .stdout_append },
+        .{ "2>", .stderr },
+        .{ "2>>", .stderr_append },
     });
 
     pub const Lexeme = []const u8;
@@ -92,11 +92,11 @@ pub const Token = struct {
         semicolon,
         ampersand,
         pipe,
-        stdin_redir,
-        stdout_redir,
-        stdout_append_redir,
-        stderr_redir,
-        stderr_append_redir,
+        stdin,
+        stdout,
+        stdout_append,
+        stderr,
+        stderr_append,
     };
 
     pub fn format(self: Token, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
@@ -119,11 +119,11 @@ fn testTokenize(source: [:0]const u8, expected_token_tags: []const Token.Tag) !v
 
 test "tokenizer" {
     try testTokenize("echo 2", &.{ .string, .string });
-    try testTokenize(">_<", &.{ .stdout_redir, .string, .stdin_redir });
+    try testTokenize(">_<", &.{ .stdout, .string, .stdin });
 
     try testTokenize(
         "echo hi > file1 2>> file2 | cat",
-        &.{ .string, .string, .stdout_redir, .string, .stderr_append_redir, .string, .pipe, .string },
+        &.{ .string, .string, .stdout, .string, .stderr_append, .string, .pipe, .string },
     );
 
     try testTokenize(

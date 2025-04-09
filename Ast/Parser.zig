@@ -6,7 +6,7 @@ const Allocator = std.mem.Allocator;
 const Ast = @import("Ast.zig");
 const Node = Ast.Node;
 const Parser = @This();
-const Token = @import("Tokenizer.zig").Token;
+const Token = Ast.Token;
 const TokenIndex = Ast.TokenIndex;
 
 pub const Error = error{ParseError} || Allocator.Error;
@@ -17,8 +17,8 @@ tok_i: TokenIndex,
 token_tags: []const Token.Tag,
 token_lexemes: []const Token.Lexeme,
 nodes: Ast.NodeList,
-extra_data: std.ArrayListUnmanaged(Node.Index),
-scratch: std.ArrayListUnmanaged(Node.Index),
+extra_data: std.ArrayListUnmanaged(u32),
+scratch: std.ArrayListUnmanaged(u32),
 
 /// grammer:
 /// commandline → list (";" | "&")?
@@ -38,10 +38,7 @@ pub fn parseRoot(p: *Parser) !void {
     if (cmds.end == cmds.start) return error.ParseError;
     assert(p.token_tags[p.tok_i] == .eof);
 
-    p.nodes.items(.data)[0] = .{
-        .lhs = cmds.start,
-        .rhs = cmds.end,
-    };
+    p.nodes.items(.data)[0] = .{ .extra_range = cmds };
 }
 
 pub fn deinit(p: *Parser) void {
@@ -52,22 +49,21 @@ pub fn deinit(p: *Parser) void {
 
 fn parseCmdLine(p: *Parser) !Node.Index {
     const list_range = try p.parseList();
-    switch (list_range.end - list_range.start) {
+    const start: usize = @intFromEnum(list_range.start);
+    const end: usize = @intFromEnum(list_range.end);
+    switch (end - start) {
         0 => return error.ParseError,
-        1 => return p.extra_data.pop().?,
+        1 => return @enumFromInt(p.extra_data.pop().?),
         else => {},
     }
 
     return p.addNode(.{
         .tag = .list,
-        .data = .{
-            .lhs = list_range.start,
-            .rhs = list_range.end,
-        },
+        .data = .{ .extra_range = list_range },
     });
 }
 
-fn parseList(p: *Parser) !Node.SubRange {
+fn parseList(p: *Parser) !Ast.ExtraRange {
     const scratch_top = p.scratch.items.len;
     defer p.scratch.shrinkRetainingCapacity(scratch_top);
 
@@ -80,23 +76,20 @@ fn parseList(p: *Parser) !Node.SubRange {
         const pipe_node = try p.parsePipe();
         switch (p.token_tags[p.tok_i]) {
             .eof, .r_paren => {
-                try p.scratch.append(p.gpa, pipe_node);
+                try p.scratch.append(p.gpa, @intFromEnum(pipe_node));
                 break;
             },
             .semicolon => {
-                try p.scratch.append(p.gpa, pipe_node);
+                try p.scratch.append(p.gpa, @intFromEnum(pipe_node));
                 p.tok_i += 1;
                 continue;
             },
             .ampersand => {
                 const back_node = try p.addNode(.{
                     .tag = .back,
-                    .data = .{
-                        .lhs = pipe_node,
-                        .rhs = undefined,
-                    },
+                    .data = .{ .node = pipe_node },
                 });
-                try p.scratch.append(p.gpa, back_node);
+                try p.scratch.append(p.gpa, @intFromEnum(back_node));
                 p.tok_i += 1;
                 continue;
             },
@@ -114,10 +107,10 @@ fn parsePipe(p: *Parser) !Node.Index {
     if (p.eatToken(.pipe)) |_| {
         return p.addNode(.{
             .tag = .pipe,
-            .data = .{
-                .lhs = redir_node,
-                .rhs = try p.parsePipe(),
-            },
+            .data = .{ .node_and_node = .{
+                redir_node,
+                try p.parsePipe(),
+            } },
         });
     }
 
@@ -129,65 +122,64 @@ fn parseRedir(p: *Parser) !Node.Index {
     defer p.scratch.shrinkRetainingCapacity(scratch_top);
 
     const exec_node = try p.parseExec();
-    const file_range = try p.parseFiles();
-    if (file_range.end == file_range.start) return exec_node;
+    const file_range = try p.parseFiles() orelse return exec_node;
 
-    const redir_token_tags: [5]Token.Tag = .{
-        .stdin_redir,
-        .stdout_redir,
-        .stdout_append_redir,
-        .stderr_redir,
-        .stderr_append_redir,
-    };
+    const redir_token_tags: [5]Token.Tag = .{ .stdin, .stdout, .stdout_append, .stderr, .stderr_append };
 
-    var token_ranges = [1]Node.TokenRange{.{}} ** 5;
-    var items_index = file_range.start;
-    for (redir_token_tags, 0..) |tag, i| {
-        for (p.extra_data.items[items_index..file_range.end]) |item| {
+    // splitting the file_range into five possible redirect types
+    var tok_i: u32 = @intFromEnum(file_range.start);
+    const tok_end: usize = @intFromEnum(file_range.end);
+    for (redir_token_tags) |tag| {
+        var start: ?Ast.ExtraIndex = null;
+        var end: ?Ast.ExtraIndex = null;
+
+        for (p.extra_data.items[tok_i..tok_end]) |item| {
             if (p.token_tags[item - 1] != tag) {
-                if (token_ranges[i].start != null)
-                    token_ranges[i].end = items_index;
+                if (start != null)
+                    end = @enumFromInt(tok_i);
                 break;
             }
 
-            if (token_ranges[i].start == null)
-                token_ranges[i].start = items_index;
-            items_index += 1;
+            if (start == null)
+                start = @enumFromInt(tok_i);
+            tok_i += 1;
         }
 
-        const file_node = if (token_ranges[i].start) |start|
-            try p.addNode(.{ .tag = .files, .data = .{
-                .lhs = start,
-                .rhs = token_ranges[i].end orelse items_index,
-            } })
+        const file_node: ?Node.Index = if (start) |s|
+            try p.addNode(.{ .tag = .files, .data = .{ .extra_range = .{
+                .start = s,
+                .end = end orelse @enumFromInt(tok_i),
+            } } })
         else
-            0;
-        try p.scratch.append(p.gpa, file_node);
+            null;
+
+        const redir_i: Node.OptionalIndex = if (file_node) |node| node.toOptional() else .none;
+        try p.scratch.append(p.gpa, @intFromEnum(redir_i));
     }
 
     const items = p.scratch.items[scratch_top..];
     const range = try p.listToSpan(items);
 
     return p.addNode(.{
-        .tag = if (p.token_tags[p.tok_i] == .pipe) .redir_pipe else .redir,
-        .data = .{
-            .lhs = exec_node,
-            .rhs = range.start,
-        },
+        .tag = if (p.token_tags[p.tok_i] == .pipe) .piped_redir else .redir,
+        .data = .{ .node_and_extra = .{
+            exec_node,
+            range.start,
+        } },
     });
 }
 
-fn parseFiles(p: *Parser) !Node.SubRange {
+fn parseFiles(p: *Parser) !?Ast.ExtraRange {
     const scratch_top = p.scratch.items.len;
     defer p.scratch.shrinkRetainingCapacity(scratch_top);
 
     while (true) {
         switch (p.token_tags[p.tok_i]) {
-            .stdin_redir,
-            .stdout_redir,
-            .stdout_append_redir,
-            .stderr_redir,
-            .stderr_append_redir,
+            .stdin,
+            .stdout,
+            .stdout_append,
+            .stderr,
+            .stderr_append,
             => {
                 p.tok_i += 1;
                 const file = p.eatToken(.string) orelse return error.ParseError;
@@ -198,7 +190,7 @@ fn parseFiles(p: *Parser) !Node.SubRange {
     }
 
     const items = p.scratch.items[scratch_top..];
-    if (items.len == 0) return .{ .start = 0, .end = 0 };
+    if (items.len == 0) return null;
 
     const S = struct {
         pub fn lessThan(token_tags: []const Token.Tag, a: TokenIndex, b: TokenIndex) bool {
@@ -207,7 +199,7 @@ fn parseFiles(p: *Parser) !Node.SubRange {
     };
 
     std.sort.insertion(TokenIndex, items, p.token_tags, S.lessThan);
-    return p.listToSpan(items);
+    return try p.listToSpan(items);
 }
 
 fn parseExec(p: *Parser) !Node.Index {
@@ -223,10 +215,10 @@ fn parseExec(p: *Parser) !Node.Index {
 
     return p.addNode(.{
         .tag = if (Node.builtins.has(p.token_lexemes[start])) .builtin else .exec,
-        .data = .{
-            .lhs = start,
-            .rhs = p.tok_i,
-        },
+        .data = .{ .token_range = .{
+            .start = start,
+            .end = p.tok_i,
+        } },
     });
 }
 
@@ -236,16 +228,16 @@ fn parseBlock(p: *Parser) Error!Node.Index {
     return cmdline_node;
 }
 
-fn listToSpan(p: *Parser, list: []const Node.Index) !Node.SubRange {
-    try p.extra_data.appendSlice(p.gpa, list);
-    return Node.SubRange{
-        .start = @intCast(p.extra_data.items.len - list.len),
-        .end = @intCast(p.extra_data.items.len),
+fn listToSpan(p: *Parser, list: anytype) !Ast.ExtraRange {
+    try p.extra_data.appendSlice(p.gpa, @ptrCast(list));
+    return .{
+        .start = @enumFromInt(p.extra_data.items.len - list.len),
+        .end = @enumFromInt(p.extra_data.items.len),
     };
 }
 
-fn addNode(p: *Parser, elem: Node) Allocator.Error!Node.Index {
-    const result: Node.Index = @intCast(p.nodes.len);
+fn addNode(p: *Parser, elem: Node) !Node.Index {
+    const result: Node.Index = @enumFromInt(p.nodes.len);
     try p.nodes.append(p.gpa, elem);
     return result;
 }

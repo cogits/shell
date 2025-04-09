@@ -18,7 +18,7 @@ const CmdError = error{OutOfMemory} ||
     posix.ForkError || posix.PipeError ||
     posix.OpenError || posix.ReadError || posix.WriteError;
 
-var arena_allocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+var arena_allocator: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
 const allocator = arena_allocator.allocator();
 
 pub fn main() !void {
@@ -38,7 +38,8 @@ pub fn main() !void {
             continue;
         }
 
-        try runcmd(tree, 0);
+        std.log.debug("{}\n{r}", .{ tree, tree });
+        try runcmd(tree, .root);
     }
 }
 
@@ -50,16 +51,16 @@ fn getcmd() ![:0]u8 {
     return buf[0..cmd.len :0];
 }
 
-fn runcmd(ast: Ast, index: Ast.Node.Index) CmdError!void {
-    const node = ast.nodes.get(index);
-    switch (node.tag) {
+fn runcmd(tree: Ast, index: Ast.Node.Index) CmdError!void {
+    const data = tree.nodeData(index);
+    switch (tree.nodeTag(index)) {
         .list => {
-            const cmds = ast.extra_data[node.data.lhs..node.data.rhs];
+            const cmds = tree.extraDataSlice(data.extra_range, Ast.Node.Index);
             for (cmds) |cmd| {
-                switch (ast.nodes.get(cmd).tag) {
-                    .builtin, .list => try runcmd(ast, cmd),
-                    .exec, .pipe, .redir, .redir_pipe, .back => {
-                        if (try posix.fork() == 0) try runcmd(ast, cmd);
+                switch (tree.nodeTag(cmd)) {
+                    .builtin, .list => try runcmd(tree, cmd),
+                    .exec, .pipe, .redir, .piped_redir, .back => {
+                        if (try posix.fork() == 0) try runcmd(tree, cmd);
                         _ = posix.waitpid(0, 0);
                     },
                     else => unreachable,
@@ -67,16 +68,16 @@ fn runcmd(ast: Ast, index: Ast.Node.Index) CmdError!void {
             }
         },
         .back => {
-            if (try posix.fork() == 0) try runcmd(ast, node.data.lhs);
+            if (try posix.fork() == 0) try runcmd(tree, data.node);
             posix.exit(0); // Let parent exit before child.
         },
         .builtin => {
             // builtins must be called by the parent, not the child.
-            const tokens = ast.tokens.items(.lexeme)[node.data.lhs..node.data.rhs];
+            const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];
             try builtin(Ast.Node.builtins.get(tokens[0]).?, tokens[1..]);
         },
         .exec => {
-            const tokens = ast.tokens.items(.lexeme)[node.data.lhs..node.data.rhs];
+            const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];
             execute(tokens) catch |err| switch (err) {
                 error.Overflow => print("sh: too many args\n", .{}),
                 error.FileNotFound => print("{s}: command not found\n", .{tokens[0]}),
@@ -85,11 +86,11 @@ fn runcmd(ast: Ast, index: Ast.Node.Index) CmdError!void {
             posix.exit(1);
         },
         .pipe => {
-            try pipe(ast, node);
+            try pipe(tree, data.node_and_node);
             posix.exit(0);
         },
-        .redir, .redir_pipe => {
-            try redirect(ast, node);
+        .redir, .piped_redir => |tag| {
+            try redirect(tree, tag, data.node_and_extra[0], data.node_and_extra[1]);
             posix.exit(0);
         },
         else => unreachable,
@@ -123,17 +124,17 @@ fn execute(tokens: []const String) !void {
     return posix.execvpeZ(argv[0].?, @ptrCast(argv), @ptrCast(std.os.environ.ptr));
 }
 
-fn pipe(ast: Ast, node: Ast.Node) !void {
+fn pipe(tree: Ast, nodes: [2]Ast.Node.Index) !void {
     const p = try posix.pipe();
 
-    for ([2]Ast.Node.Index{ node.data.lhs, node.data.rhs }, [2]u8{ 1, 0 }) |cmd, fd| {
+    for (nodes, [2]u8{ 1, 0 }) |cmd, fd| {
         if (try posix.fork() == 0) {
             posix.close(fd);
 
             _ = try posix.dup(p[fd]);
             posix.close(p[0]);
             posix.close(p[1]);
-            try runcmd(ast, cmd);
+            try runcmd(tree, cmd);
         }
     }
 
@@ -143,8 +144,8 @@ fn pipe(ast: Ast, node: Ast.Node) !void {
     _ = posix.waitpid(0, 0);
 }
 
-fn redirect(ast: Ast, node: Ast.Node) !void {
-    const extra = ast.extraData(node.data.rhs, Ast.Node.Redirection);
+fn redirect(tree: Ast, tag: Ast.Node.Tag, exec: Ast.Node.Index, extra: Ast.ExtraIndex) !void {
+    const redir = tree.extraData(extra, Ast.Node.Redirection);
     const FdList = std.ArrayList(posix.fd_t);
 
     const stdio_pipe, var fd_list = blk: {
@@ -152,20 +153,20 @@ fn redirect(ast: Ast, node: Ast.Node) !void {
         var fds: [3]?FdList = undefined;
 
         for (0..3, [3]bool{
-            extra.stdin != 0,
-            extra.stdout != 0 or extra.stdout_append != 0 or node.tag == .redir_pipe,
-            extra.stderr != 0 or extra.stderr_append != 0,
+            redir.stdin != .none,
+            redir.stdout != .none or redir.stdout_append != .none or tag == .piped_redir,
+            redir.stderr != .none or redir.stderr_append != .none,
         }) |i, exist| {
             if (exist) {
                 pipes[i] = try posix.pipe();
-                fds[i] = FdList.init(allocator);
+                fds[i] = .init(allocator);
             } else {
                 pipes[i] = null;
                 fds[i] = null;
             }
         }
 
-        if (node.tag == .redir_pipe) try fds[1].?.append(1);
+        if (tag == .piped_redir) try fds[1].?.append(1);
         break :blk .{ pipes, fds };
     };
 
@@ -179,7 +180,7 @@ fn redirect(ast: Ast, node: Ast.Node) !void {
                 posix.close(p[1]);
             }
         }
-        try runcmd(ast, node.data.lhs);
+        try runcmd(tree, exec);
     }
 
     // open input/output files
@@ -194,11 +195,10 @@ fn redirect(ast: Ast, node: Ast.Node) !void {
         },
         .{ 0, 1, 1, 2, 2 },
     ) |field, flags, i| {
-        const field_index = @field(extra, field.name);
-        if (field_index != 0) {
-            const field_node = ast.nodes.get(field_index);
-            const files = ast.extra_data[field_node.data.lhs..field_node.data.rhs];
-            const tokens = ast.tokens.items(.lexeme);
+        const redir_node = @field(redir, field.name);
+        if (redir_node.unwrap()) |node| {
+            const files = tree.extraDataSlice(tree.nodeData(node).extra_range, Ast.TokenIndex);
+            const tokens = tree.tokens.items(.lexeme);
 
             for (files) |file| {
                 const path = try allocator.dupeZ(u8, tokens[file]);
