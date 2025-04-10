@@ -85,7 +85,7 @@ fn runcmd(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!void {
         },
         .builtin => {
             const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];
-            try builtin(Ast.Node.builtins.get(tokens[0]).?, tokens[1..]);
+            try builtin(std.meta.stringToEnum(Ast.Node.Builtin, tokens[0]).?, tokens[1..]);
         },
         .exec => {
             const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];

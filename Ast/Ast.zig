@@ -1,5 +1,6 @@
 const Ast = @This();
 const std = @import("std");
+const root = @import("root");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
@@ -83,15 +84,8 @@ pub const Node = struct {
         builtin,
     };
 
-    pub const Builtin = enum {
-        cd,
-        exit,
-    };
-
-    pub const builtins: std.StaticStringMap(Builtin) = .initComptime(.{
-        .{ "cd", .cd },
-        .{ "exit", .exit },
-    });
+    /// Builtin commands that can be overridden by the root file.
+    pub const Builtin = if (@hasDecl(root, "Builtin")) root.Builtin else enum { cd, exit };
 
     pub const Data = union {
         node: Index,

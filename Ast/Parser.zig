@@ -210,8 +210,9 @@ fn parseExec(p: *Parser) !Node.Index {
         }
     }
 
+    const is_builtin = std.meta.stringToEnum(Node.Builtin, p.token_lexemes[start]) != null;
     return p.addNode(.{
-        .tag = if (Node.builtins.has(p.token_lexemes[start])) .builtin else .exec,
+        .tag = if (is_builtin) .builtin else .exec,
         .data = .{ .token_range = .{
             .start = start,
             .end = p.tok_i,
