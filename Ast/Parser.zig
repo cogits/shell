@@ -29,16 +29,13 @@ scratch: std.ArrayListUnmanaged(u32),
 pub fn parseRoot(p: *Parser) !void {
     assert(p.token_tags.len > 1);
     // Root node must be index 0.
-    p.nodes.appendAssumeCapacity(.{
-        .tag = .list,
-        .data = undefined,
-    });
+    p.nodes.appendAssumeCapacity(undefined);
 
-    const cmds = try p.parseList();
-    if (cmds.end == cmds.start) return error.ParseError;
+    _ = try p.parseCmdLine();
     assert(p.token_tags[p.tok_i] == .eof);
 
-    p.nodes.items(.data)[0] = .{ .extra_range = cmds };
+    const cmds = p.nodes.pop().?;
+    p.nodes.set(0, cmds);
 }
 
 pub fn deinit(p: *Parser) void {

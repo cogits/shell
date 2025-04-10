@@ -39,7 +39,7 @@ pub fn main() !void {
         }
 
         std.log.debug("{}\n{r}", .{ tree, tree });
-        try runcmd(tree, .root);
+        try runcmd(tree, .root, true);
     }
 }
 
@@ -51,28 +51,39 @@ fn getcmd() ![:0]u8 {
     return buf[0..cmd.len :0];
 }
 
-fn runcmd(tree: Ast, index: Ast.Node.Index) CmdError!void {
+fn runcmd(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!void {
+    const tag = tree.nodeTag(index);
+
+    // Process creation strategy:
+    // - Root-level commands may need child processes (except builtins/lists)
+    // - Nested commands always execute in current process
+    const state: enum { root, parent, child } = if (root)
+        switch (tag) {
+            .list, .builtin => .root,
+            else => if (try posix.fork() == 0) .child else .parent,
+        }
+    else
+        .child;
+
+    // Parent process cleanup: wait for any forked children
+    if (state == .parent) {
+        _ = posix.waitpid(0, 0);
+        return;
+    }
+
+    // Command execution logic (runs in either root shell or child process)
     const data = tree.nodeData(index);
-    switch (tree.nodeTag(index)) {
+    switch (tag) {
         .list => {
             const cmds = tree.extraDataSlice(data.extra_range, Ast.Node.Index);
             for (cmds) |cmd| {
-                switch (tree.nodeTag(cmd)) {
-                    .builtin, .list => try runcmd(tree, cmd),
-                    .exec, .pipe, .redir, .piped_redir, .back => {
-                        if (try posix.fork() == 0) try runcmd(tree, cmd);
-                        _ = posix.waitpid(0, 0);
-                    },
-                    else => unreachable,
-                }
+                try runcmd(tree, cmd, state == .root);
             }
         },
         .back => {
-            if (try posix.fork() == 0) try runcmd(tree, data.node);
-            posix.exit(0); // Let parent exit before child.
+            if (try posix.fork() == 0) try runcmd(tree, data.node, false);
         },
         .builtin => {
-            // builtins must be called by the parent, not the child.
             const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];
             try builtin(Ast.Node.builtins.get(tokens[0]).?, tokens[1..]);
         },
@@ -87,14 +98,14 @@ fn runcmd(tree: Ast, index: Ast.Node.Index) CmdError!void {
         },
         .pipe => {
             try pipe(tree, data.node_and_node);
-            posix.exit(0);
         },
-        .redir, .piped_redir => |tag| {
+        .redir, .piped_redir => {
             try redirect(tree, tag, data.node_and_extra[0], data.node_and_extra[1]);
-            posix.exit(0);
         },
         else => unreachable,
     }
+
+    if (state == .child) posix.exit(0);
 }
 
 fn builtin(tag: Ast.Node.Builtin, tokens: []const String) error{OutOfMemory}!void {
@@ -134,7 +145,7 @@ fn pipe(tree: Ast, nodes: [2]Ast.Node.Index) !void {
             _ = try posix.dup(p[fd]);
             posix.close(p[0]);
             posix.close(p[1]);
-            try runcmd(tree, cmd);
+            try runcmd(tree, cmd, false);
         }
     }
 
@@ -180,7 +191,7 @@ fn redirect(tree: Ast, tag: Ast.Node.Tag, exec: Ast.Node.Index, extra: Ast.Extra
                 posix.close(p[1]);
             }
         }
-        try runcmd(tree, exec);
+        try runcmd(tree, exec, false);
     }
 
     // open input/output files
