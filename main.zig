@@ -15,8 +15,10 @@ const color = struct {
 };
 
 const CmdError = error{OutOfMemory} ||
-    posix.ForkError || posix.PipeError ||
+    posix.ForkError || posix.PipeError || posix.GetCwdError ||
     posix.OpenError || posix.ReadError || posix.WriteError;
+
+pub const Builtin = enum { cd, exit, echo, pwd, command };
 
 var arena_allocator: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
 const allocator = arena_allocator.allocator();
@@ -83,18 +85,13 @@ fn runcmd(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!void {
         .back => {
             if (try posix.fork() == 0) try runcmd(tree, data.node, false);
         },
-        .builtin => {
+        .builtin, .exec => {
             const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];
-            try builtin(std.meta.stringToEnum(Ast.Node.Builtin, tokens[0]).?, tokens[1..]);
-        },
-        .exec => {
-            const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];
-            execute(tokens) catch |err| switch (err) {
-                error.Overflow => print("sh: too many args\n", .{}),
-                error.FileNotFound => print("{s}: command not found\n", .{tokens[0]}),
-                else => |e| print("exec {s} failed: {s}\n", .{ tokens[0], @errorName(e) }),
-            };
-            posix.exit(1);
+            if (tag == .builtin) {
+                try builtin(std.meta.stringToEnum(Builtin, tokens[0]).?, tokens[1..]);
+            } else {
+                execute(tokens);
+            }
         },
         .pipe => {
             try pipe(tree, data.node_and_node);
@@ -108,7 +105,8 @@ fn runcmd(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!void {
     if (state == .child) posix.exit(0);
 }
 
-fn builtin(tag: Ast.Node.Builtin, tokens: []const String) error{OutOfMemory}!void {
+/// builtins must be called by the parent, not the child.
+fn builtin(tag: Builtin, tokens: []const String) !void {
     switch (tag) {
         .cd => {
             const path = try allocator.dupeZ(u8, tokens[0]);
@@ -120,10 +118,33 @@ fn builtin(tag: Ast.Node.Builtin, tokens: []const String) error{OutOfMemory}!voi
             const n = if (tokens.len == 0) 0 else std.fmt.parseInt(u8, tokens[0], 0) catch 1;
             posix.exit(n);
         },
+        .echo => {
+            for (tokens) |token| {
+                print("{s} ", .{token});
+            }
+            print("\n", .{});
+        },
+        .pwd => {
+            var buffer: [std.fs.max_path_bytes]u8 = undefined;
+            print("{s}\n", .{try std.process.getCwd(&buffer)});
+        },
+        .command => {
+            if (try posix.fork() == 0) execute(tokens);
+            _ = posix.waitpid(0, 0);
+        },
     }
 }
 
-fn execute(tokens: []const String) !void {
+fn execute(tokens: []const String) noreturn {
+    execvpe(tokens) catch |err| switch (err) {
+        error.Overflow => print("sh: too many args\n", .{}),
+        error.FileNotFound => print("{s}: command not found\n", .{tokens[0]}),
+        else => |e| print("exec {s} failed: {s}\n", .{ tokens[0], @errorName(e) }),
+    };
+    posix.exit(1);
+}
+
+fn execvpe(tokens: []const String) !void {
     var list: std.BoundedArray(?[*:0]const u8, MAXARG + 2) = .{};
 
     for (tokens) |token| {
