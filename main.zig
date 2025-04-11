@@ -22,40 +22,84 @@ pub const Builtin = enum { cd, exit, echo, pwd, command };
 
 var arena_allocator: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
 const allocator = arena_allocator.allocator();
+
 const stdin = std.io.getStdIn().reader();
+var cmd_buffer: [1024]u8 = undefined;
+
+const usage =
+    \\Usage: shell [OPTION]... [FILE]...
+    \\
+    \\Options:
+    \\  --help         Display this help message and exit
+    \\
+    \\Execute commands from:
+    \\  (no args)      Start interactive REPL shell
+    \\  FILE           Run commands from each specified file
+;
 
 pub fn main() !void {
-    var buffer: [1024]u8 = undefined;
+    const args = try std.process.argsAlloc(std.heap.page_allocator);
+    defer std.process.argsFree(allocator, args);
+
+    if (args.len > 1) {
+        if (std.mem.eql(u8, args[1], "--help")) {
+            print("{s}\n", .{usage});
+        } else {
+            for (args[1..]) |file| {
+                try script(file);
+            }
+        }
+        return;
+    }
+
+    try repl();
+}
+
+fn repl() !void {
     while (true) {
         _ = arena_allocator.reset(.retain_capacity); // This reclaims all allocations!
         print(color.yellow ++ "$ " ++ color.reset, .{});
 
-        // get command
-        const bytes = try stdin.readUntilDelimiterOrEof(&buffer, '\n') orelse posix.exit(0);
-        buffer[bytes.len] = 0;
-        const cmd: [:0]const u8 = buffer[0..bytes.len :0];
-
-        // parse command
-        var error_token: String = undefined;
-        var tree = Ast.parse(allocator, cmd, &error_token) catch |err| switch (err) {
-            error.EmptyCmd => continue,
-            error.TokenizeError, error.ParseError => {
-                const position = @intFromPtr(error_token.ptr) - @intFromPtr(cmd.ptr);
-                print("{s:[2]}{s:~<[3]}\n", .{ "", "^", position + 2, error_token.len });
-                print("sh: parse error near `{s}'\n", .{error_token});
-                continue;
-            },
-            else => return err,
-        };
-        defer tree.deinit(allocator);
-
-        // run command
-        std.log.debug("{}\n{r}", .{ tree, tree });
-        try runcmd(tree, .root, true);
+        const bytes = try stdin.readUntilDelimiterOrEof(&cmd_buffer, '\n') orelse posix.exit(0);
+        cmd_buffer[bytes.len] = 0;
+        const cmd: [:0]const u8 = cmd_buffer[0..bytes.len :0];
+        try runcmd(cmd, true);
     }
 }
 
-fn runcmd(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!void {
+fn script(path: String) !void {
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    while (try file.reader().readUntilDelimiterOrEof(&cmd_buffer, '\n')) |line| {
+        _ = arena_allocator.reset(.retain_capacity); // This reclaims all allocations!
+        cmd_buffer[line.len] = 0;
+        const cmd: [:0]const u8 = cmd_buffer[0..line.len :0];
+        try runcmd(cmd, false);
+    }
+}
+
+fn runcmd(cmd: [:0]const u8, debug: bool) !void {
+    // parse command
+    var error_token: String = undefined;
+    var tree = Ast.parse(allocator, cmd, &error_token) catch |err| switch (err) {
+        error.EmptyCmd => return,
+        error.TokenizeError, error.ParseError => {
+            const position = @intFromPtr(error_token.ptr) - @intFromPtr(cmd.ptr);
+            print("{s:[2]}{s:~<[3]}\n", .{ "", "^", position + 2, error_token.len });
+            print("sh: parse error near `{s}'\n", .{error_token});
+            return;
+        },
+        else => return err,
+    };
+    defer tree.deinit(allocator);
+
+    // run command
+    if (debug) std.log.debug("{}\n{r}", .{ tree, tree });
+    try runnode(tree, .root, true);
+}
+
+fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!void {
     const tag = tree.nodeTag(index);
 
     // Process creation strategy:
@@ -81,11 +125,11 @@ fn runcmd(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!void {
         .list => {
             const cmds = tree.extraDataSlice(data.extra_range, Ast.Node.Index);
             for (cmds) |cmd| {
-                try runcmd(tree, cmd, state == .root);
+                try runnode(tree, cmd, state == .root);
             }
         },
         .back => {
-            if (try posix.fork() == 0) try runcmd(tree, data.node, false);
+            if (try posix.fork() == 0) try runnode(tree, data.node, false);
         },
         .builtin, .exec => {
             const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];
@@ -168,7 +212,7 @@ fn pipe(tree: Ast, nodes: [2]Ast.Node.Index) !void {
             _ = try posix.dup(p[fd]);
             posix.close(p[0]);
             posix.close(p[1]);
-            try runcmd(tree, cmd, false);
+            try runnode(tree, cmd, false);
         }
     }
 
@@ -214,7 +258,7 @@ fn redirect(tree: Ast, tag: Ast.Node.Tag, exec: Ast.Node.Index, extra: Ast.Extra
                 posix.close(p[1]);
             }
         }
-        try runcmd(tree, exec, false);
+        try runnode(tree, exec, false);
     }
 
     // open input/output files
