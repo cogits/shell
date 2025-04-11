@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const Parser = @import("Parser.zig");
 const Tokenizer = @import("Tokenizer.zig");
 pub const Token = Tokenizer.Token;
+pub const Error = error{ EmptyCmd, TokenizeError, ParseError } || Allocator.Error;
 
 /// Reference to externally-owned data.
 source: [:0]const u8,
@@ -15,7 +16,6 @@ tokens: TokenList.Slice,
 /// The root AST node is assumed to be index 0.
 nodes: NodeList.Slice,
 extra_data: []u32,
-error_token: ?[]const u8 = null,
 
 /// Index into `tokens`.
 pub const TokenIndex = u32;
@@ -130,8 +130,8 @@ pub const Node = struct {
 
 /// Result should be freed with tree.deinit() when there are
 /// no more references to any of the tokens or nodes.
-pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!?Ast {
-    if (source.len == 0) return null;
+pub fn parse(gpa: Allocator, source: [:0]const u8, error_token: *[]const u8) Error!Ast {
+    if (source.len == 0) return Error.EmptyCmd;
 
     var ast: Ast = .{
         .source = source,
@@ -151,14 +151,14 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!?Ast {
     while (true) {
         const token = tokenizer.next();
         if (token.tag == .invalid) {
-            ast.error_token = token.lexeme;
-            return ast;
+            error_token.* = token.lexeme;
+            return Error.TokenizeError;
         }
         try tokens.append(gpa, token);
         if (token.tag == .eof) break;
     }
 
-    if (tokens.len <= 1) return null;
+    if (tokens.len <= 1) return Error.EmptyCmd;
 
     var parser: Parser = .{
         .source = source,
@@ -179,13 +179,13 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!?Ast {
 
     parser.parseRoot() catch |err| switch (err) {
         error.ParseError => {
-            ast.error_token = if (parser.tok_i == parser.token_tags.len - 1)
+            error_token.* = if (parser.tok_i == parser.token_tags.len - 1)
                 tokens.get(parser.tok_i - 1).lexeme
             else
                 tokens.get(parser.tok_i).lexeme;
-            return ast;
+            return err;
         },
-        else => |e| return e,
+        else => return err,
     };
 
     ast.tokens = tokens.toOwnedSlice();
@@ -195,11 +195,9 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!?Ast {
 }
 
 pub fn deinit(tree: *Ast, gpa: Allocator) void {
-    if (tree.error_token == null) {
-        tree.tokens.deinit(gpa);
-        tree.nodes.deinit(gpa);
-        gpa.free(tree.extra_data);
-    }
+    tree.tokens.deinit(gpa);
+    tree.nodes.deinit(gpa);
+    gpa.free(tree.extra_data);
     tree.* = undefined;
 }
 

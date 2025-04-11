@@ -26,19 +26,21 @@ const allocator = arena_allocator.allocator();
 pub fn main() !void {
     while (true) {
         _ = arena_allocator.reset(.retain_capacity);
-
         print(color.yellow ++ "$ " ++ color.reset, .{});
-        const cmd = try getcmd();
-        var tree = try Ast.parse(allocator, cmd) orelse continue;
-        defer tree.deinit(allocator);
 
-        if (tree.error_token != null) {
-            const error_token = tree.error_token.?;
-            const position = @intFromPtr(error_token.ptr) - @intFromPtr(tree.source.ptr);
-            print("{s:[2]}{s:~<[3]}\n", .{ "", "^", position + 2, error_token.len });
-            print("sh: parse error near `{s}'\n", .{error_token});
-            continue;
-        }
+        const cmd = try getcmd();
+        var error_token: String = undefined;
+        var tree = Ast.parse(allocator, cmd, &error_token) catch |err| switch (err) {
+            error.EmptyCmd => continue,
+            error.TokenizeError, error.ParseError => {
+                const position = @intFromPtr(error_token.ptr) - @intFromPtr(cmd.ptr);
+                print("{s:[2]}{s:~<[3]}\n", .{ "", "^", position + 2, error_token.len });
+                print("sh: parse error near `{s}'\n", .{error_token});
+                continue;
+            },
+            else => return err,
+        };
+        defer tree.deinit(allocator);
 
         std.log.debug("{}\n{r}", .{ tree, tree });
         try runcmd(tree, .root, true);
