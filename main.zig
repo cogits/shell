@@ -22,13 +22,20 @@ pub const Builtin = enum { cd, exit, echo, pwd, command };
 
 var arena_allocator: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
 const allocator = arena_allocator.allocator();
+const stdin = std.io.getStdIn().reader();
 
 pub fn main() !void {
+    var buffer: [1024]u8 = undefined;
     while (true) {
-        _ = arena_allocator.reset(.retain_capacity);
+        _ = arena_allocator.reset(.retain_capacity); // This reclaims all allocations!
         print(color.yellow ++ "$ " ++ color.reset, .{});
 
-        const cmd = try getcmd();
+        // get command
+        const bytes = try stdin.readUntilDelimiterOrEof(&buffer, '\n') orelse posix.exit(0);
+        buffer[bytes.len] = 0;
+        const cmd: [:0]const u8 = buffer[0..bytes.len :0];
+
+        // parse command
         var error_token: String = undefined;
         var tree = Ast.parse(allocator, cmd, &error_token) catch |err| switch (err) {
             error.EmptyCmd => continue,
@@ -42,17 +49,10 @@ pub fn main() !void {
         };
         defer tree.deinit(allocator);
 
+        // run command
         std.log.debug("{}\n{r}", .{ tree, tree });
         try runcmd(tree, .root, true);
     }
-}
-
-fn getcmd() ![:0]u8 {
-    var buf = try allocator.alloc(u8, 256);
-    const stdin = std.io.getStdIn().reader();
-    const cmd = try stdin.readUntilDelimiterOrEof(buf, '\n') orelse posix.exit(0);
-    buf[cmd.len] = 0; // chop \n
-    return buf[0..cmd.len :0];
 }
 
 fn runcmd(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!void {
