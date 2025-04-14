@@ -7,7 +7,7 @@ const Allocator = std.mem.Allocator;
 const Parser = @import("Parser.zig");
 const Tokenizer = @import("Tokenizer.zig");
 pub const Token = Tokenizer.Token;
-pub const Error = error{ EmptyCmd, TokenizeError, ParseError } || Allocator.Error;
+pub const Error = error{ EmptyCmd, TokenizeError } || Parser.Error;
 
 /// Reference to externally-owned data.
 source: [:0]const u8,
@@ -314,10 +314,12 @@ pub fn extraData(tree: Ast, index: ExtraIndex, comptime T: type) T {
 
 fn testParse(source: [:0]const u8, expected: []const u8) !void {
     const allocator = std.testing.allocator;
-    var tree = try parse(allocator, source) orelse return;
+    var error_token: []const u8 = undefined;
+    var tree = parse(allocator, source, &error_token) catch |err| switch (err) {
+        error.EmptyCmd => return,
+        else => return err,
+    };
     defer tree.deinit(allocator);
-
-    assert(tree.error_token == null);
 
     var buffer: std.ArrayList(u8) = .init(allocator);
     defer buffer.deinit();
@@ -329,16 +331,17 @@ fn testParse(source: [:0]const u8, expected: []const u8) !void {
 
 fn testError(source: [:0]const u8) !void {
     const allocator = std.testing.allocator;
-    var tree = try parse(allocator, source) orelse unreachable;
+    var error_token: []const u8 = undefined;
+    var tree = parse(allocator, source, &error_token) catch return;
     defer tree.deinit(allocator);
 
-    assert(tree.error_token != null);
+    unreachable;
 }
 
 test "parse" {
     try testParse(
-        "echo hello ; sleep & ls",
-        "echo hello ; sleep & ls",
+        "sleep & echo ':)'; ls",
+        "sleep & echo :) ; ls",
     );
     try testParse(
         "ls 2> file1 >> file2 >> file3 > file4 2>> file5",
@@ -387,4 +390,5 @@ test "error" {
     try testError("&@");
     try testError("()");
     try testError("))");
+    try testError("echo :)");
 }

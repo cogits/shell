@@ -32,7 +32,7 @@ pub fn parseRoot(p: *Parser) !void {
     p.nodes.appendAssumeCapacity(undefined);
 
     _ = try p.parseCmdLine();
-    assert(p.token_tags[p.tok_i] == .eof);
+    if (p.token_tags[p.tok_i] != .eof) return Error.ParseError;
 
     const cmds = p.nodes.pop().?;
     p.nodes.set(0, cmds);
