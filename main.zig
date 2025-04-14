@@ -110,7 +110,7 @@ fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!u32 {
     // - Nested commands always execute in current process
     const state: enum { root, parent, child } = if (root)
         switch (tag) {
-            .list, .builtin => .root,
+            .list, .builtin, .@"and", .@"or" => .root,
             else => if (try posix.fork() == 0) .child else .parent,
         }
     else
@@ -131,6 +131,12 @@ fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!u32 {
                 status = try runnode(tree, cmd, state == .root);
             }
         },
+        .@"and", .@"or" => {
+            status = try runnode(tree, data.node_and_node[0], state == .root);
+            if (tag == .@"and" and status != 0) return status;
+            if (tag == .@"or" and status == 0) return status;
+            status = try runnode(tree, data.node_and_node[1], state == .root);
+        },
         .builtin, .exec => {
             const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];
             if (tag == .builtin) {
@@ -142,12 +148,8 @@ fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!u32 {
         .back => if (try posix.fork() == 0) {
             _ = try runnode(tree, data.node, false);
         },
-        .pipe => {
-            try pipe(tree, data.node_and_node);
-        },
-        .redir, .piped_redir => {
-            try redirect(tree, tag, data.node_and_extra[0], data.node_and_extra[1]);
-        },
+        .pipe => try pipe(tree, data.node_and_node),
+        .redir, .piped_redir => try redirect(tree, tag, data.node_and_extra),
         else => unreachable,
     }
 
@@ -229,8 +231,8 @@ fn pipe(tree: Ast, nodes: [2]Ast.Node.Index) !noreturn {
     posix.exit(if (ret.status != 0) 1 else 0);
 }
 
-fn redirect(tree: Ast, tag: Ast.Node.Tag, exec: Ast.Node.Index, extra: Ast.ExtraIndex) !noreturn {
-    const redir = tree.extraData(extra, Ast.Node.Redirection);
+fn redirect(tree: Ast, tag: Ast.Node.Tag, node_and_extra: struct { Ast.Node.Index, Ast.ExtraIndex }) !noreturn {
+    const redir = tree.extraData(node_and_extra[1], Ast.Node.Redirection);
     const FdList = std.ArrayList(posix.fd_t);
 
     const stdio_pipe, var fd_list = blk: {
@@ -265,7 +267,7 @@ fn redirect(tree: Ast, tag: Ast.Node.Tag, exec: Ast.Node.Index, extra: Ast.Extra
                 posix.close(p[1]);
             }
         }
-        _ = try runnode(tree, exec, false);
+        _ = try runnode(tree, node_and_extra[0], false);
     }
 
     // open input/output files

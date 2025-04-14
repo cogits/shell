@@ -46,13 +46,10 @@ pub fn next(self: *Tokenizer) Token {
             else
                 self.buffer.len - self.index;
         },
-        ';', '&', '|', '<', '(', ')' => 1,
-        '>' => if (self.buffer[self.index + 1] == '>') 2 else 1,
+        ';', '<', '(', ')' => 1,
+        '>', '&', '|' => |char| if (self.buffer[self.index + 1] == char) 2 else 1,
         else => |char| if (char == '2' and self.buffer[self.index + 1] == '>')
-            if (self.buffer[self.index + 2] == '>')
-                3
-            else
-                2
+            if (self.buffer[self.index + 2] == '>') 3 else 2
         else
             std.mem.indexOfAny(u8, self.buffer[self.index..], whitespace ++ symbols) orelse
                 self.buffer.len - self.index,
@@ -75,6 +72,8 @@ pub const Token = struct {
         .{ ";", .semicolon },
         .{ "&", .ampersand },
         .{ "|", .pipe },
+        .{ "&&", .@"and" },
+        .{ "||", .@"or" },
         .{ "<", .stdin },
         .{ ">", .stdout },
         .{ ">>", .stdout_append },
@@ -92,6 +91,8 @@ pub const Token = struct {
         semicolon,
         ampersand,
         pipe,
+        @"and",
+        @"or",
         stdin,
         stdout,
         stdout_append,
@@ -129,6 +130,11 @@ test "tokenizer" {
     try testTokenize(
         "echo hi&(ls | cat);",
         &.{ .string, .string, .ampersand, .l_paren, .string, .pipe, .string, .r_paren, .semicolon },
+    );
+
+    try testTokenize(
+        "> file 2>> file2 || | cat && pwd",
+        &.{ .stdout, .string, .stderr_append, .string, .@"or", .pipe, .string, .@"and", .string },
     );
 
     try testTokenize(

@@ -66,10 +66,14 @@ pub const Node = struct {
     };
 
     pub const Tag = enum {
-        /// `cmd1 ; cmd2`
+        /// `cmd1 ; cmd2 ...`
         list,
         /// `exec &`
         back,
+        /// `cmd1 && cmd2`
+        @"and",
+        /// `cmd1 || cmd2`
+        @"or",
         /// `exec1 | exec2`
         pipe,
         /// `exec files* ...` (standalone)
@@ -119,7 +123,7 @@ pub const Node = struct {
                 "tokens[{}..{}]",
                 .{ data.token_range.start, data.token_range.end },
             ),
-            .pipe => try w.print(
+            .@"and", .@"or", .pipe => try w.print(
                 "nodes[{}] nodes[{}]",
                 .{ @intFromEnum(data.node_and_node[0]), @intFromEnum(data.node_and_node[1]) },
             ),
@@ -249,9 +253,17 @@ fn print(tree: Ast, w: anytype, index: Node.Index) !void {
                 }
             }
         },
-        .pipe => {
+        .@"and", .@"or", .pipe => |tag| {
+            if (index != .root) try w.writeAll("(");
+            defer if (index != .root) w.writeAll(")") catch unreachable;
+
             try tree.print(w, data.node_and_node[0]);
-            try w.writeAll(" | ");
+            try w.print(" {s} ", .{switch (tag) {
+                .@"and" => "&&",
+                .@"or" => "||",
+                .pipe => "|",
+                else => unreachable,
+            }});
             try tree.print(w, data.node_and_node[1]);
         },
         else => unreachable,
@@ -349,7 +361,11 @@ test "parse" {
     );
     try testParse(
         "ls | cat | cat",
-        "ls | cat | cat",
+        "ls | (cat | cat)",
+    );
+    try testParse(
+        "ls && pwd || date",
+        "(ls && pwd) || date",
     );
     try testParse(
         "echo > file > file2 > file3",
@@ -357,7 +373,7 @@ test "parse" {
     );
     try testParse(
         "echo hi 2> file1 > file2 | cat > file4; sleep 10 & ls",
-        "echo hi > file2 2> file1 | cat > file4 ; sleep 10 & ls",
+        "(echo hi > file2 2> file1 | cat > file4) ; sleep 10 & ls",
     );
     try testParse(
         "(ls;)",
@@ -365,7 +381,7 @@ test "parse" {
     );
     try testParse(
         "(ls | cat > file; sleep 1)& echo hi",
-        "(ls | cat > file ; sleep 1) & echo hi",
+        "((ls | cat > file) ; sleep 1) & echo hi",
     );
     try testParse(
         "cd cd",
@@ -391,4 +407,5 @@ test "error" {
     try testError("()");
     try testError("))");
     try testError("echo :)");
+    try testError("pwd ||| cat");
 }

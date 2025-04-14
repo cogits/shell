@@ -21,8 +21,9 @@ extra_data: std.ArrayListUnmanaged(u32),
 scratch: std.ArrayListUnmanaged(u32),
 
 /// grammer:
-/// commandline → list (";" | "&")?
-/// list        → pipeline ((";" | "&") pipeline)*
+/// commandline → list
+/// list        → condition ((";" | "&") condition)* (";" | "&")?
+/// condition   → (pipeline ("&&" | "||"))* pipeline
 /// pipeline    → redirection ("|" redirection)*
 /// redirection → command (("<" | ">" | ">>" | "2>" | "2>>") file)*
 /// command     → string+ | "(" commandline ")"
@@ -70,21 +71,21 @@ fn parseList(p: *Parser) !Ast.ExtraRange {
             else => {},
         }
 
-        const pipe_node = try p.parsePipe();
+        const condition_node = try p.parseCondition();
         switch (p.token_tags[p.tok_i]) {
             .eof, .r_paren => {
-                try p.scratch.append(p.gpa, @intFromEnum(pipe_node));
+                try p.scratch.append(p.gpa, @intFromEnum(condition_node));
                 break;
             },
             .semicolon => {
-                try p.scratch.append(p.gpa, @intFromEnum(pipe_node));
+                try p.scratch.append(p.gpa, @intFromEnum(condition_node));
                 p.tok_i += 1;
                 continue;
             },
             .ampersand => {
                 const back_node = try p.addNode(.{
                     .tag = .back,
-                    .data = .{ .node = pipe_node },
+                    .data = .{ .node = condition_node },
                 });
                 try p.scratch.append(p.gpa, @intFromEnum(back_node));
                 p.tok_i += 1;
@@ -98,6 +99,25 @@ fn parseList(p: *Parser) !Ast.ExtraRange {
     return p.listToSpan(items);
 }
 
+// Left-Associative
+fn parseCondition(p: *Parser) !Node.Index {
+    const pipe_node = try p.parsePipe();
+    return p.parseCondInner(pipe_node);
+}
+
+fn parseCondInner(p: *Parser, left: Node.Index) !Node.Index {
+    const op = p.eatToken(.@"and") orelse p.eatToken(.@"or") orelse return left;
+    const node = try p.addNode(.{
+        .tag = if (p.token_tags[op] == .@"and") .@"and" else .@"or",
+        .data = .{ .node_and_node = .{
+            left,
+            try p.parsePipe(),
+        } },
+    });
+    return p.parseCondInner(node);
+}
+
+// Right-Associative
 fn parsePipe(p: *Parser) !Node.Index {
     const redir_node = try p.parseRedir();
 
