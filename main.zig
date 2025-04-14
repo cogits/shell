@@ -56,14 +56,16 @@ pub fn main() !void {
 }
 
 fn repl() !void {
+    var status: u32 = 0;
     while (true) {
         _ = arena_allocator.reset(.retain_capacity); // This reclaims all allocations!
-        print(color.yellow ++ "$ " ++ color.reset, .{});
+        const prompt_color = if (status == 0) color.yellow else color.red;
+        print("{s}$ " ++ color.reset, .{prompt_color});
 
         const bytes = try stdin.readUntilDelimiterOrEof(&cmd_buffer, '\n') orelse posix.exit(0);
         cmd_buffer[bytes.len] = 0;
         const cmd: [:0]const u8 = cmd_buffer[0..bytes.len :0];
-        try runcmd(cmd, true);
+        status = try runcmd(cmd, true);
     }
 }
 
@@ -75,20 +77,20 @@ fn script(path: String) !void {
         _ = arena_allocator.reset(.retain_capacity); // This reclaims all allocations!
         cmd_buffer[line.len] = 0;
         const cmd: [:0]const u8 = cmd_buffer[0..line.len :0];
-        try runcmd(cmd, false);
+        if (try runcmd(cmd, false) != 0) return error.CmdFailed;
     }
 }
 
-fn runcmd(cmd: [:0]const u8, debug: bool) !void {
+fn runcmd(cmd: [:0]const u8, debug: bool) !u32 {
     // parse command
     var error_token: String = undefined;
     var tree = Ast.parse(allocator, cmd, &error_token) catch |err| switch (err) {
-        error.EmptyCmd => return,
+        error.EmptyCmd => return 0,
         error.TokenizeError, error.ParseError => {
             const position = @intFromPtr(error_token.ptr) - @intFromPtr(cmd.ptr);
             print("{s:[2]}{s:~<[3]}\n", .{ "", "^", position + 2, error_token.len });
             print("sh: parse error near `{s}'\n", .{error_token});
-            return;
+            return 1;
         },
         else => return err,
     };
@@ -96,10 +98,11 @@ fn runcmd(cmd: [:0]const u8, debug: bool) !void {
 
     // run command
     if (debug) std.log.debug("{}\n{r}", .{ tree, tree });
-    try runnode(tree, .root, true);
+    return runnode(tree, .root, true);
 }
 
-fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!void {
+fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!u32 {
+    var status: u32 = 0;
     const tag = tree.nodeTag(index);
 
     // Process creation strategy:
@@ -115,8 +118,8 @@ fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!void {
 
     // Parent process cleanup: wait for any forked children
     if (state == .parent) {
-        _ = posix.waitpid(0, 0);
-        return;
+        const ret = posix.waitpid(0, 0);
+        return ret.status;
     }
 
     // Command execution logic (runs in either root shell or child process)
@@ -125,19 +128,19 @@ fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!void {
         .list => {
             const cmds = tree.extraDataSlice(data.extra_range, Ast.Node.Index);
             for (cmds) |cmd| {
-                try runnode(tree, cmd, state == .root);
+                status = try runnode(tree, cmd, state == .root);
             }
-        },
-        .back => {
-            if (try posix.fork() == 0) try runnode(tree, data.node, false);
         },
         .builtin, .exec => {
             const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];
             if (tag == .builtin) {
-                try builtin(std.meta.stringToEnum(Builtin, tokens[0]).?, tokens[1..]);
+                status = try builtin(std.meta.stringToEnum(Builtin, tokens[0]).?, tokens[1..]);
             } else {
                 execute(tokens);
             }
+        },
+        .back => if (try posix.fork() == 0) {
+            _ = try runnode(tree, data.node, false);
         },
         .pipe => {
             try pipe(tree, data.node_and_node);
@@ -149,10 +152,11 @@ fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!void {
     }
 
     if (state == .child) posix.exit(0);
+    return status;
 }
 
 /// builtins must be called by the parent, not the child.
-fn builtin(tag: Builtin, tokens: []const String) !void {
+fn builtin(tag: Builtin, tokens: []const String) !u32 {
     switch (tag) {
         .cd => {
             const path = try allocator.dupeZ(u8, tokens[0]);
@@ -176,9 +180,11 @@ fn builtin(tag: Builtin, tokens: []const String) !void {
         },
         .command => {
             if (try posix.fork() == 0) execute(tokens);
-            _ = posix.waitpid(0, 0);
+            const ret = posix.waitpid(0, 0);
+            return ret.status;
         },
     }
+    return 0;
 }
 
 fn execute(tokens: []const String) noreturn {
@@ -202,7 +208,7 @@ fn execvpe(tokens: []const String) !void {
     return posix.execvpeZ(argv[0].?, @ptrCast(argv), @ptrCast(std.os.environ.ptr));
 }
 
-fn pipe(tree: Ast, nodes: [2]Ast.Node.Index) !void {
+fn pipe(tree: Ast, nodes: [2]Ast.Node.Index) !noreturn {
     const p = try posix.pipe();
 
     for (nodes, [2]u8{ 1, 0 }) |cmd, fd| {
@@ -212,17 +218,18 @@ fn pipe(tree: Ast, nodes: [2]Ast.Node.Index) !void {
             _ = try posix.dup(p[fd]);
             posix.close(p[0]);
             posix.close(p[1]);
-            try runnode(tree, cmd, false);
+            _ = try runnode(tree, cmd, false);
         }
     }
 
     posix.close(p[0]);
     posix.close(p[1]);
     _ = posix.waitpid(0, 0);
-    _ = posix.waitpid(0, 0);
+    const ret = posix.waitpid(0, 0);
+    posix.exit(if (ret.status != 0) 1 else 0);
 }
 
-fn redirect(tree: Ast, tag: Ast.Node.Tag, exec: Ast.Node.Index, extra: Ast.ExtraIndex) !void {
+fn redirect(tree: Ast, tag: Ast.Node.Tag, exec: Ast.Node.Index, extra: Ast.ExtraIndex) !noreturn {
     const redir = tree.extraData(extra, Ast.Node.Redirection);
     const FdList = std.ArrayList(posix.fd_t);
 
@@ -258,7 +265,7 @@ fn redirect(tree: Ast, tag: Ast.Node.Tag, exec: Ast.Node.Index, extra: Ast.Extra
                 posix.close(p[1]);
             }
         }
-        try runnode(tree, exec, false);
+        _ = try runnode(tree, exec, false);
     }
 
     // open input/output files
@@ -324,5 +331,6 @@ fn redirect(tree: Ast, tag: Ast.Node.Tag, exec: Ast.Node.Index, extra: Ast.Extra
         }
     }
 
-    _ = posix.waitpid(0, 0);
+    const ret = posix.waitpid(0, 0);
+    posix.exit(if (ret.status != 0) 1 else 0);
 }
