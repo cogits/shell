@@ -23,8 +23,9 @@ pub const Builtin = enum { cd, exit, echo, pwd, command };
 var arena_allocator: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
 const allocator = arena_allocator.allocator();
 
+const prompt = "$ ";
 const stdin = std.io.getStdIn().reader();
-var cmd_buffer: [1024]u8 = undefined;
+var cmd_buffer: [1024:0]u8 = undefined;
 
 const usage =
     \\Usage: shell [OPTION]... [FILE]...
@@ -60,7 +61,7 @@ fn repl() !void {
     while (true) {
         _ = arena_allocator.reset(.retain_capacity); // This reclaims all allocations!
         const prompt_color = if (status == 0) color.yellow else color.red;
-        print("{s}$ " ++ color.reset, .{prompt_color});
+        print("{s}{s}" ++ color.reset, .{ prompt_color, prompt });
 
         const bytes = try stdin.readUntilDelimiterOrEof(&cmd_buffer, '\n') orelse posix.exit(0);
         cmd_buffer[bytes.len] = 0;
@@ -87,9 +88,11 @@ fn runcmd(cmd: [:0]const u8, debug: bool) !u32 {
     var tree = Ast.parse(allocator, cmd, &error_token) catch |err| switch (err) {
         error.EmptyCmd => return 0,
         error.TokenizeError, error.ParseError => {
-            const position = @intFromPtr(error_token.ptr) - @intFromPtr(cmd.ptr);
-            print("{s:[2]}{s:~<[3]}\n", .{ "", "^", position + 2, error_token.len });
-            print("sh: parse error near `{s}'\n", .{error_token});
+            if (debug) {
+                const position = @intFromPtr(error_token.ptr) - @intFromPtr(cmd.ptr);
+                print("{s:[2]}{s:~<[3]}\n", .{ "", "^", position + prompt.len, error_token.len });
+                print("sh: parse error near `{s}'\n", .{error_token});
+            }
             return 1;
         },
         else => return err,
@@ -102,12 +105,10 @@ fn runcmd(cmd: [:0]const u8, debug: bool) !u32 {
 }
 
 fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!u32 {
-    var status: u32 = 0;
-    const tag = tree.nodeTag(index);
-
     // Process creation strategy:
     // - Root-level commands may need child processes (except builtins/lists)
     // - Nested commands always execute in current process
+    const tag = tree.nodeTag(index);
     const state: enum { root, parent, child } = if (root)
         switch (tag) {
             .list, .builtin, .@"and", .@"or" => .root,
@@ -123,6 +124,7 @@ fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!u32 {
     }
 
     // Command execution logic (runs in either root shell or child process)
+    var status: u32 = 0;
     const data = tree.nodeData(index);
     switch (tag) {
         .list => {
@@ -159,12 +161,15 @@ fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!u32 {
 
 /// builtins must be called by the parent, not the child.
 fn builtin(tag: Builtin, tokens: []const String) !u32 {
+    var status: u32 = 0;
     switch (tag) {
         .cd => {
             const path = try allocator.dupeZ(u8, tokens[0]);
             defer allocator.free(path);
-            posix.chdir(path) catch |err|
+            posix.chdir(path) catch |err| {
                 print("cannot cd {s}: {s}\n", .{ path, @errorName(err) });
+                status = 1;
+            };
         },
         .exit => {
             const n = if (tokens.len == 0) 0 else std.fmt.parseInt(u8, tokens[0], 0) catch 1;
@@ -182,11 +187,10 @@ fn builtin(tag: Builtin, tokens: []const String) !u32 {
         },
         .command => {
             if (try posix.fork() == 0) execute(tokens);
-            const ret = posix.waitpid(0, 0);
-            return ret.status;
+            status = posix.waitpid(0, 0).status;
         },
     }
-    return 0;
+    return status;
 }
 
 fn execute(tokens: []const String) noreturn {
