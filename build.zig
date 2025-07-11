@@ -21,9 +21,11 @@ pub fn build(b: *std.Build) !void {
 
     const shell = b.addExecutable(.{
         .name = "shell",
-        .root_source_file = b.path("main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     shell.root_module.addImport("Ast", ast_module);
 
@@ -44,9 +46,11 @@ pub fn build(b: *std.Build) !void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const lib_unit_tests = b.addTest(.{
-        .root_source_file = b.path("Ast/Ast.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("Ast/Ast.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
@@ -62,9 +66,11 @@ pub fn build(b: *std.Build) !void {
     for (targets) |t| {
         const exe = b.addExecutable(.{
             .name = b.fmt("shell-{s}-{s}", .{ @tagName(t.cpu_arch.?), @tagName(t.os_tag.?) }),
-            .root_source_file = b.path("main.zig"),
-            .target = b.resolveTargetQuery(t),
-            .optimize = .ReleaseSmall,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("main.zig"),
+                .target = b.resolveTargetQuery(t),
+                .optimize = .ReleaseSmall,
+            }),
         });
         exe.root_module.addImport("Ast", ast_module);
 
