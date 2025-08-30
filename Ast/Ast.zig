@@ -2,6 +2,7 @@ const Ast = @This();
 const std = @import("std");
 const root = @import("root");
 const assert = std.debug.assert;
+const Writer = std.Io.Writer;
 const Allocator = std.mem.Allocator;
 
 const Parser = @import("Parser.zig");
@@ -107,7 +108,7 @@ pub const Node = struct {
         stderr_append: OptionalIndex,
     };
 
-    pub fn format(node: Node, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+    pub fn format(node: Node, w: *Writer) !void {
         try w.print("{s}: ", .{@tagName(node.tag)});
         const data = node.data;
         switch (node.tag) {
@@ -205,13 +206,44 @@ pub fn deinit(tree: *Ast, gpa: Allocator) void {
     tree.* = undefined;
 }
 
-pub fn format(ast: Ast, comptime fmt: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
-    if (comptime std.mem.eql(u8, fmt, "r")) {
-        try ast.rawFormat(w);
-    } else {
-        try ast.print(w, .root);
+pub fn format(tree: Ast, w: *Writer) !void {
+    // print tokens
+    try w.print("tokens({}) =>\n", .{tree.tokens.len});
+    for (tree.tokens.items(.tag), tree.tokens.items(.lexeme), 0..) |tag, lexeme, i| {
+        try w.print("[{}] {s} :: {s}\n", .{ i, lexeme, @tagName(tag) });
+    }
+
+    // print nodes
+    try w.print("nodes({}) =>\n", .{tree.nodes.len});
+    for (0..tree.nodes.len) |i| {
+        const node = tree.nodes.get(i);
+        try w.print("[{}] {f}\n", .{ i, node });
+    }
+
+    // print extra_data
+    try w.print("extra({}) =>\n", .{tree.extra_data.len});
+    for (tree.extra_data, 0..) |extra, idx| {
+        try w.print("[{}] ", .{idx});
+        if (extra == @intFromEnum(Node.OptionalIndex.none)) {
+            try w.writeAll("none\n");
+        } else {
+            try w.print("{}\n", .{extra});
+        }
     }
 }
+
+pub fn with(self: *const Ast, node: Node.Index) WithNode {
+    return .{ .ast = self, .node = node };
+}
+
+pub const WithNode = struct {
+    ast: *const Ast,
+    node: Node.Index,
+
+    pub fn format(self: WithNode, w: *Writer) Writer.Error!void {
+        self.ast.print(w, self.node) catch return error.WriteFailed;
+    }
+};
 
 fn print(tree: Ast, w: anytype, index: Node.Index) !void {
     const data = tree.nodeData(index);
@@ -270,32 +302,6 @@ fn print(tree: Ast, w: anytype, index: Node.Index) !void {
     }
 }
 
-fn rawFormat(tree: Ast, w: anytype) !void {
-    // print tokens
-    try w.print("tokens({}) =>\n", .{tree.tokens.len});
-    for (tree.tokens.items(.tag), tree.tokens.items(.lexeme), 0..) |tag, lexeme, i| {
-        try w.print("[{}] {s} :: {s}\n", .{ i, lexeme, @tagName(tag) });
-    }
-
-    // print nodes
-    try w.print("nodes({}) =>\n", .{tree.nodes.len});
-    for (0..tree.nodes.len) |i| {
-        const node = tree.nodes.get(i);
-        try w.print("[{}] {}\n", .{ i, node });
-    }
-
-    // print extra_data
-    try w.print("extra({}) =>\n", .{tree.extra_data.len});
-    for (tree.extra_data, 0..) |extra, idx| {
-        try w.print("[{}] ", .{idx});
-        if (extra == @intFromEnum(Node.OptionalIndex.none)) {
-            try w.writeAll("none\n");
-        } else {
-            try w.print("{}\n", .{extra});
-        }
-    }
-}
-
 pub fn nodeTag(tree: *const Ast, node: Node.Index) Node.Tag {
     return tree.nodes.items(.tag)[@intFromEnum(node)];
 }
@@ -333,11 +339,10 @@ fn testParse(source: [:0]const u8, expected: []const u8) !void {
     };
     defer tree.deinit(allocator);
 
-    var buffer: std.ArrayList(u8) = .init(allocator);
-    defer buffer.deinit();
-    const bw = buffer.writer();
+    var buffer: std.ArrayList(u8) = .empty;
+    defer buffer.deinit(allocator);
 
-    try bw.print("{s}", .{tree});
+    try buffer.print(allocator, "{f}", .{tree.with(.root)});
     try std.testing.expectEqualStrings(expected, buffer.items);
 }
 

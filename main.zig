@@ -24,8 +24,8 @@ var arena_allocator: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
 const allocator = arena_allocator.allocator();
 
 const prompt = "$ ";
-const stdin = std.io.getStdIn().reader();
 var cmd_buffer: [1024:0]u8 = undefined;
+var stdin = std.fs.File.stdin().reader(&cmd_buffer);
 
 const usage =
     \\Usage: shell [OPTION]... [FILE]...
@@ -63,7 +63,10 @@ fn repl() !void {
         const prompt_color = if (status == 0) color.yellow else color.red;
         print("{s}{s}" ++ color.reset, .{ prompt_color, prompt });
 
-        const bytes = try stdin.readUntilDelimiterOrEof(&cmd_buffer, '\n') orelse posix.exit(0);
+        const bytes = stdin.interface.takeDelimiterExclusive('\n') catch {
+            print("\n", .{});
+            posix.exit(0);
+        };
         cmd_buffer[bytes.len] = 0;
         const cmd: [:0]const u8 = cmd_buffer[0..bytes.len :0];
         status = try runcmd(cmd, true);
@@ -74,7 +77,8 @@ fn script(path: String) !void {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
 
-    while (try file.reader().readUntilDelimiterOrEof(&cmd_buffer, '\n')) |line| {
+    var file_reader = file.reader(&cmd_buffer);
+    while (file_reader.interface.takeDelimiterExclusive('\n') catch null) |line| {
         _ = arena_allocator.reset(.retain_capacity); // This reclaims all allocations!
         cmd_buffer[line.len] = 0;
         const cmd: [:0]const u8 = cmd_buffer[0..line.len :0];
@@ -100,7 +104,7 @@ fn runcmd(cmd: [:0]const u8, debug: bool) !u32 {
     defer tree.deinit(allocator);
 
     // run command
-    if (debug) std.log.debug("{}\n{r}", .{ tree, tree });
+    if (debug) std.log.debug("{f}", .{tree});
     return runnode(tree, .root, true);
 }
 
@@ -148,7 +152,7 @@ fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!u32 {
             }
         },
         .back => if (try posix.fork() == 0) {
-            _ = try runnode(tree, data.node, false);
+            _ = try runnode(tree, data.node, true);
         },
         .pipe => try pipe(tree, data.node_and_node),
         .redir, .piped_redir => try redirect(tree, tag, data.node_and_extra),
@@ -195,7 +199,7 @@ fn builtin(tag: Builtin, tokens: []const String) !u32 {
 
 fn execute(tokens: []const String) noreturn {
     execvpe(tokens) catch |err| switch (err) {
-        error.Overflow => print("sh: too many args\n", .{}),
+        error.TooBig => print("sh: too many args\n", .{}),
         error.FileNotFound => print("{s}: command not found\n", .{tokens[0]}),
         else => |e| print("exec {s} failed: {s}\n", .{ tokens[0], @errorName(e) }),
     };
@@ -203,14 +207,15 @@ fn execute(tokens: []const String) noreturn {
 }
 
 fn execvpe(tokens: []const String) !void {
-    var list: std.BoundedArray(?[*:0]const u8, MAXARG + 2) = .{};
+    if (tokens.len > MAXARG) return error.TooBig;
+    var list = try allocator.allocSentinel(?[*:0]const u8, tokens.len, null);
+    defer allocator.free(list);
 
-    for (tokens) |token| {
-        try list.append(try allocator.dupeZ(u8, token));
+    for (tokens, 0..) |token, i| {
+        list[i] = try allocator.dupeZ(u8, token);
     }
-    try list.append(null);
 
-    const argv = list.slice();
+    const argv = list[0 .. list.len + 1];
     return posix.execvpeZ(argv[0].?, @ptrCast(argv), @ptrCast(std.os.environ.ptr));
 }
 
@@ -241,7 +246,7 @@ fn redirect(tree: Ast, tag: Ast.Node.Tag, node_and_extra: struct { Ast.Node.Inde
 
     const stdio_pipe, var fd_list = blk: {
         var pipes: [3]?[2]c_int = undefined;
-        var fds: [3]?FdList = undefined;
+        var fds: [3]FdList = @splat(.empty);
 
         for (0..3, [3]bool{
             redir.stdin != .none,
@@ -250,14 +255,12 @@ fn redirect(tree: Ast, tag: Ast.Node.Tag, node_and_extra: struct { Ast.Node.Inde
         }) |i, exist| {
             if (exist) {
                 pipes[i] = try posix.pipe();
-                fds[i] = .init(allocator);
             } else {
                 pipes[i] = null;
-                fds[i] = null;
             }
         }
 
-        if (tag == .piped_redir) try fds[1].?.append(1);
+        if (tag == .piped_redir) try fds[1].append(allocator, 1);
         break :blk .{ pipes, fds };
     };
 
@@ -294,7 +297,7 @@ fn redirect(tree: Ast, tag: Ast.Node.Tag, node_and_extra: struct { Ast.Node.Inde
             for (files) |file| {
                 const path = try allocator.dupeZ(u8, tokens[file]);
                 defer allocator.free(path);
-                try fd_list[i].?.append(try posix.open(path, flags, std.fs.File.default_mode));
+                try fd_list[i].append(allocator, try posix.open(path, flags, std.fs.File.default_mode));
             }
         }
     }
@@ -309,7 +312,7 @@ fn redirect(tree: Ast, tag: Ast.Node.Tag, node_and_extra: struct { Ast.Node.Inde
             posix.close(p[0]);
             defer posix.close(p[1]);
 
-            for (fd_list[0].?.items) |fd| {
+            for (fd_list[0].items) |fd| {
                 while (true) {
                     const nbytes = try posix.read(fd, buf);
                     if (nbytes == 0) break;
@@ -324,7 +327,7 @@ fn redirect(tree: Ast, tag: Ast.Node.Tag, node_and_extra: struct { Ast.Node.Inde
                 posix.close(p[1]);
                 defer posix.close(p[0]);
 
-                const fds = list.?.items;
+                const fds = list.items;
                 while (true) {
                     const nbytes = try posix.read(p[0], buf);
                     if (nbytes == 0) break;

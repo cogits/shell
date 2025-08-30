@@ -5,11 +5,14 @@ jobs:
     steps:
       - name: Check out
         uses: https://github.com/actions/checkout@v4
+
       - name: Install Zig
-        uses: https://github.com/mlugg/setup-zig@v1
+        uses: https://github.com/mlugg/setup-zig@v2
+
       - name: Run test
         run: |
           zig build test
+
       - name: Build shell
         run: |
           zig build release --summary all

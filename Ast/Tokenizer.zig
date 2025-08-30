@@ -100,7 +100,7 @@ pub const Token = struct {
         stderr_append,
     };
 
-    pub fn format(self: Token, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+    pub fn format(self: Token, w: *std.Io.Writer) !void {
         try w.print("'{s}' :: {s}", .{ self.lexeme, @tagName(self.tag) });
     }
 };
@@ -110,7 +110,7 @@ fn testTokenize(source: [:0]const u8, expected_token_tags: []const Token.Tag) !v
     for (expected_token_tags) |expected_token_tag| {
         const token = tokenizer.next();
         std.testing.expectEqual(expected_token_tag, token.tag) catch |err| {
-            std.log.err("token: {}", .{token});
+            std.log.err("token: {f}", .{token});
             return err;
         };
     }

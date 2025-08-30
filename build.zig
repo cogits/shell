@@ -1,16 +1,5 @@
 const std = @import("std");
 
-const targets: []const std.Target.Query = &.{
-    .{ .cpu_arch = .x86, .os_tag = .linux },
-    .{ .cpu_arch = .x86_64, .os_tag = .linux },
-    .{ .cpu_arch = .aarch64, .os_tag = .linux },
-    .{ .cpu_arch = .riscv64, .os_tag = .linux },
-    .{ .cpu_arch = .powerpc64le, .os_tag = .linux },
-
-    .{ .cpu_arch = .x86_64, .os_tag = .macos },
-    .{ .cpu_arch = .aarch64, .os_tag = .macos },
-};
-
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -81,3 +70,28 @@ pub fn build(b: *std.Build) !void {
         release_step.dependOn(&target_output.step);
     }
 }
+
+const targets: []const std.Target.Query = &.{
+    .{ .cpu_arch = .x86, .os_tag = .linux },
+    .{ .cpu_arch = .x86_64, .os_tag = .linux },
+    .{ .cpu_arch = .arm, .os_tag = .linux, .abi = .musleabi },
+    .{ .cpu_arch = .aarch64, .os_tag = .linux },
+    .{ .cpu_arch = .riscv64, .os_tag = .linux },
+    .{ .cpu_arch = .s390x, .os_tag = .linux },
+    .{ .cpu_arch = .powerpc64le, .os_tag = .linux },
+    .{ .cpu_arch = .loongarch64, .os_tag = .linux },
+
+    .{ .cpu_arch = .x86_64, .os_tag = .macos },
+    .{ .cpu_arch = .aarch64, .os_tag = .macos },
+
+    .{ .cpu_arch = .x86_64, .os_tag = .freebsd },
+    .{ .cpu_arch = .aarch64, .os_tag = .freebsd },
+    .{ .cpu_arch = .riscv64, .os_tag = .freebsd },
+    .{ .cpu_arch = .powerpc64, .os_tag = .freebsd },
+    .{ .cpu_arch = .powerpc64le, .os_tag = .freebsd },
+
+    .{ .cpu_arch = .x86, .os_tag = .netbsd },
+    .{ .cpu_arch = .x86_64, .os_tag = .netbsd },
+    .{ .cpu_arch = .aarch64, .os_tag = .netbsd },
+    .{ .cpu_arch = .arm, .os_tag = .netbsd, .abi = .eabihf },
+};
