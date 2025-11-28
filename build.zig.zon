@@ -1,13 +1,13 @@
 .{
     .name = .shell,
-    .version = "0.2.5",
-    .minimum_zig_version = "0.15.2",
+    .version = "0.2.6",
+    .minimum_zig_version = "0.16.0",
 
     .paths = .{
         "Ast",
+        "src",
         "build.zig",
         "build.zig.zon",
-        "main.zig",
     },
     .fingerprint = 0x4592b2fdfadedeed,
 }
