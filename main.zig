@@ -240,6 +240,22 @@ fn pipe(tree: Ast, nodes: [2]Ast.Node.Index) !noreturn {
     posix.exit(if (ret.status != 0) 1 else 0);
 }
 
+//    +------------+    +-------------+    +-------------+
+//    | stdin file |    | stderr file |    | stdout file |
+//    +------------+    +-------------+    +-------------+
+//        |                   |                     |
+//   read |                   | write               | write
+//        |                   ⇑                     |
+//        +--⇒ ----+  fork +----+    fork  +---- ⇒--+
+//            | sh | ⇐---- | sh | -------⇒ | sh |
+//  write +--⇐ ----+       +----+ ----+    +---- ⇐--+ read
+//        |              read ⇑       |             |
+//        ‖                   ‖   fork|             ‖
+//   pipe ‖                   ‖   exec|             ‖ pipe
+//        ‖             write ⇑       |             ‖
+//        |                +-----+ ⇐--+             |
+//   read +---------------⇒| cat |⇒-----------------+ write
+//                         +-----+
 fn redirect(tree: Ast, tag: Ast.Node.Tag, node_and_extra: struct { Ast.Node.Index, Ast.ExtraIndex }) !noreturn {
     const redir = tree.extraData(node_and_extra[1], Ast.Node.Redirection);
 
@@ -254,7 +270,7 @@ fn redirect(tree: Ast, tag: Ast.Node.Tag, node_and_extra: struct { Ast.Node.Inde
             if (exist) list[i] = .{ .pipe = try posix.pipe() };
         }
 
-        if (tag == .piped_redir) try list[1].?.fds.append(allocator, 1);
+        if (tag == .piped_redir) try list[1].?.fds.append(allocator, posix.STDOUT_FILENO);
         break :rl list;
     };
 
@@ -271,6 +287,45 @@ fn redirect(tree: Ast, tag: Ast.Node.Tag, node_and_extra: struct { Ast.Node.Inde
         _ = try runnode(tree, node_and_extra[0], false);
     }
 
+    // fork two shells to process stdin/stdout redirections
+    inline for (.{ .stdin, .stdout }) |stdio| {
+        if (try posix.fork() == 0) {
+            try redirectIO(tree, redir, &redir_list, stdio);
+            posix.exit(0);
+        }
+    }
+
+    // the parent shell processes stderr redirections
+    try redirectIO(tree, redir, &redir_list, .stderr);
+
+    var status: u8 = 0;
+    for (0..3) |_| {
+        const ret = posix.waitpid(0, 0);
+        status += @truncate(ret.status);
+    }
+    posix.exit(status);
+}
+
+/// Process I/O redirection between shell and executed command.
+/// Manages data piping between file descriptors for stdin/stdout/stderr redirection.
+fn redirectIO(
+    tree: Ast,
+    redir: Ast.Node.Redirection,
+    list: *[3]?RedirList,
+    comptime stdio: enum(u8) { stdin, stdout, stderr },
+) !void {
+    const idx: usize = @intFromEnum(stdio);
+
+    // close unused pipes
+    for (list, 0..) |redir_list, i| {
+        if (idx == i) continue;
+
+        if (redir_list) |ls| {
+            posix.close(ls.pipe[0]);
+            posix.close(ls.pipe[1]);
+        }
+    }
+
     // open input/output files
     inline for (
         std.meta.fields(Ast.Node.Redirection),
@@ -283,57 +338,53 @@ fn redirect(tree: Ast, tag: Ast.Node.Tag, node_and_extra: struct { Ast.Node.Inde
         },
         .{ 0, 1, 1, 2, 2 },
     ) |field, flags, i| {
-        const redir_node = @field(redir, field.name);
-        if (redir_node.unwrap()) |node| {
+        if (idx != i) continue;
+
+        if (@field(redir, field.name).unwrap()) |node| {
             const files = tree.extraDataSlice(tree.nodeData(node).extra_range, Ast.TokenIndex);
             const tokens = tree.tokens.items(.lexeme);
 
             for (files) |file| {
                 const path = try allocator.dupeZ(u8, tokens[file]);
                 defer allocator.free(path);
-                try redir_list[i].?.fds.append(allocator, try posix.open(path, flags, std.fs.File.default_mode));
+                try list[i].?.fds.append(allocator, try posix.open(path, flags, std.fs.File.default_mode));
             }
         }
     }
 
     // pipe data between child and input/output files
-    {
-        const buf = try allocator.alloc(u8, PIPESIZE);
-        defer allocator.free(buf);
-
+    var pipe_buffer: [PIPESIZE]u8 = undefined;
+    if (stdio == .stdin) {
         // read from input files and write to child stdin pipe
-        if (redir_list[0]) |ls| {
+        if (list[0]) |ls| {
             posix.close(ls.pipe[0]);
             defer posix.close(ls.pipe[1]);
 
             for (ls.fds.items) |fd| {
                 while (true) {
-                    const nbytes = try posix.read(fd, buf);
+                    const nbytes = try posix.read(fd, &pipe_buffer);
                     if (nbytes == 0) break;
-                    _ = try posix.write(ls.pipe[1], buf[0..nbytes]);
+                    _ = try posix.write(ls.pipe[1], pipe_buffer[0..nbytes]);
                 }
             }
         }
-
+    } else for (list[1..], 1..) |redir_list, i| {
         // read from child stdout/stderr pipes and write to output files
-        for (redir_list[1..]) |list| {
-            if (list) |ls| {
-                posix.close(ls.pipe[1]);
-                defer posix.close(ls.pipe[0]);
+        if (idx != i) continue;
 
-                const fds = ls.fds.items;
-                while (true) {
-                    const nbytes = try posix.read(ls.pipe[0], buf);
-                    if (nbytes == 0) break;
+        if (redir_list) |ls| {
+            posix.close(ls.pipe[1]);
+            defer posix.close(ls.pipe[0]);
 
-                    for (fds) |fd| {
-                        _ = try posix.write(fd, buf[0..nbytes]);
-                    }
+            const fds = ls.fds.items;
+            while (true) {
+                const nbytes = try posix.read(ls.pipe[0], &pipe_buffer);
+                if (nbytes == 0) break;
+
+                for (fds) |fd| {
+                    _ = try posix.write(fd, pipe_buffer[0..nbytes]);
                 }
             }
         }
     }
-
-    const ret = posix.waitpid(0, 0);
-    posix.exit(if (ret.status != 0) 1 else 0);
 }
