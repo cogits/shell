@@ -114,7 +114,7 @@ pub const Node = struct {
     };
 
     pub fn format(node: Node, w: *Writer) !void {
-        try w.print("{s}: ", .{@tagName(node.tag)});
+        try w.print("{t}: ", .{node.tag});
         const data = node.data;
         switch (node.tag) {
             .list, .files => |tag| try w.print(
@@ -214,22 +214,23 @@ pub fn deinit(tree: *Ast, gpa: Allocator) void {
 
 pub fn format(tree: Ast, w: *Writer) !void {
     // print tokens
-    try w.print("tokens({}) =>\n", .{tree.tokens.len});
+    try w.print("tokens({}):\n", .{tree.tokens.len});
     for (tree.tokens.items(.tag), tree.tokens.items(.lexeme), 0..) |tag, lexeme, i| {
-        try w.print("[{}] {s} :: {s}\n", .{ i, lexeme, @tagName(tag) });
+        try w.print("{: >3} => {s} :: {t}\n", .{ i, lexeme, tag });
     }
 
     // print nodes
-    try w.print("nodes({}) =>\n", .{tree.nodes.len});
+    try w.print("nodes({}):\n", .{tree.nodes.len});
     for (0..tree.nodes.len) |i| {
         const node = tree.nodes.get(i);
-        try w.print("[{}] {f}\n", .{ i, node });
+        try w.print("{: >3} => {f} => {f}\n", .{ i, node, tree.with(@enumFromInt(i)) });
     }
 
     // print extra_data
-    try w.print("extra({}) =>\n", .{tree.extra_data.len});
+    if (tree.extra_data.len == 0) return;
+    try w.print("extra({}):\n", .{tree.extra_data.len});
     for (tree.extra_data, 0..) |extra, idx| {
-        try w.print("[{}] ", .{idx});
+        try w.print("{: >3} => ", .{idx});
         if (extra == @intFromEnum(Node.OptionalIndex.none)) {
             try w.writeAll("none\n");
         } else {
@@ -265,6 +266,19 @@ fn print(tree: Ast, w: anytype, index: Node.Index) !void {
                 try tree.print(w, cmd);
             }
         },
+        .@"and", .@"or", .pipe => |tag| {
+            if (index != .root) try w.writeAll("(");
+            defer if (index != .root) w.writeAll(")") catch unreachable;
+
+            try tree.print(w, data.node_and_node[0]);
+            try w.print(" {s} ", .{switch (tag) {
+                .@"and" => "&&",
+                .@"or" => "||",
+                .pipe => "|",
+                else => unreachable,
+            }});
+            try tree.print(w, data.node_and_node[1]);
+        },
         .exec, .builtin => {
             const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];
             try w.print("{s}", .{tokens[0]});
@@ -285,26 +299,16 @@ fn print(tree: Ast, w: anytype, index: Node.Index) !void {
                 if (redir_node.unwrap()) |node| {
                     const files = tree.extraDataSlice(tree.nodeData(node).extra_range, TokenIndex);
                     const tokens = tree.tokens.items(.lexeme);
-                    for (files) |file| {
-                        try w.print(" {s} {s}", .{ symbol, tokens[file] });
-                    }
+                    for (files) |file| try w.print(" {s} {s}", .{ symbol, tokens[file] });
                 }
             }
         },
-        .@"and", .@"or", .pipe => |tag| {
-            if (index != .root) try w.writeAll("(");
-            defer if (index != .root) w.writeAll(")") catch unreachable;
-
-            try tree.print(w, data.node_and_node[0]);
-            try w.print(" {s} ", .{switch (tag) {
-                .@"and" => "&&",
-                .@"or" => "||",
-                .pipe => "|",
-                else => unreachable,
-            }});
-            try tree.print(w, data.node_and_node[1]);
+        .files => {
+            const files = tree.extraDataSlice(data.extra_range, TokenIndex);
+            const tokens = tree.tokens.items(.lexeme);
+            try w.print("{s}", .{tokens[files[0]]});
+            for (files[1..]) |file| try w.print(",{s}", .{tokens[file]});
         },
-        else => unreachable,
     }
 }
 
