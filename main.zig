@@ -2,7 +2,6 @@ const std = @import("std");
 const Ast = @import("Ast");
 const String = []const u8;
 const posix = std.posix;
-const print = std.debug.print;
 
 const MAXARG = 8;
 const PIPESIZE = 64;
@@ -97,8 +96,8 @@ fn runcmd(cmd: [:0]const u8, debug: bool) !u32 {
         error.TokenizeError, error.ParseError => {
             if (debug) {
                 const position = @intFromPtr(error_token.ptr) - @intFromPtr(cmd.ptr);
-                print("{s:[2]}{s:~<[3]}\n", .{ "", "^", position + prompt.len, error_token.len });
-                print("sh: parse error near `{s}'\n", .{error_token});
+                std.debug.print("{s:[2]}{s:~<[3]}\n", .{ "", "^", position + prompt.len, error_token.len });
+                std.log.err("sh: parse error near `{s}'\n", .{error_token});
             }
             return 1;
         },
@@ -171,7 +170,7 @@ fn builtin(tag: Builtin, tokens: []const String) !u32 {
             const path = try allocator.dupeZ(u8, tokens[0]);
             defer allocator.free(path);
             posix.chdir(path) catch |err| {
-                print("cannot cd {s}: {s}\n", .{ path, @errorName(err) });
+                std.log.err("cannot cd {s}: {t}\n", .{ path, err });
                 status = 1;
             };
         },
@@ -180,9 +179,7 @@ fn builtin(tag: Builtin, tokens: []const String) !u32 {
             posix.exit(n);
         },
         .echo => {
-            for (tokens) |token| {
-                print("{s} ", .{token});
-            }
+            for (tokens) |token| print("{s} ", .{token});
             print("\n", .{});
         },
         .pwd => {
@@ -199,9 +196,9 @@ fn builtin(tag: Builtin, tokens: []const String) !u32 {
 
 fn execute(tokens: []const String) noreturn {
     execvpe(tokens) catch |err| switch (err) {
-        error.TooBig => print("sh: too many args\n", .{}),
-        error.FileNotFound => print("{s}: command not found\n", .{tokens[0]}),
-        else => |e| print("exec {s} failed: {s}\n", .{ tokens[0], @errorName(e) }),
+        error.TooBig => std.log.err("sh: too many args\n", .{}),
+        error.FileNotFound => std.log.err("{s}: command not found\n", .{tokens[0]}),
+        else => |e| std.log.err("exec {s} failed: {t}\n", .{ tokens[0], e }),
     };
     posix.exit(1);
 }
@@ -387,4 +384,14 @@ fn redirectIO(
             }
         }
     }
+}
+
+/// Print to stdout, silently returning on failure. Uses a 64-byte buffer for formatted printing
+/// which is flushed before this function returns.
+fn print(comptime fmt: []const u8, args: anytype) void {
+    var buffer: [64]u8 = undefined;
+    var writer = std.fs.File.stdout().writer(&buffer);
+    const w = &writer.interface;
+    defer w.flush() catch {};
+    w.print(fmt, args) catch return;
 }
