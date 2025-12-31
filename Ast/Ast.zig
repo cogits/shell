@@ -89,8 +89,13 @@ pub const Node = struct {
         builtin,
     };
 
-    /// Builtin commands that can be overridden by the root file.
-    pub const Builtin = if (@hasDecl(root, "Builtin")) root.Builtin else enum { cd, exit };
+    pub fn isBuiltin(comptime T: type) fn ([]const u8) bool {
+        return struct {
+            pub fn inner(token: []const u8) bool {
+                return std.meta.stringToEnum(T, token) != null;
+            }
+        }.inner;
+    }
 
     pub const Data = union {
         node: Index,
@@ -135,7 +140,7 @@ pub const Node = struct {
 
 /// Result should be freed with tree.deinit() when there are
 /// no more references to any of the tokens or nodes.
-pub fn parse(gpa: Allocator, source: [:0]const u8, error_token: *[]const u8) Error!Ast {
+pub fn parse(Builtin: type, gpa: Allocator, source: [:0]const u8, error_token: *[]const u8) Error!Ast {
     if (source.len == 0) return Error.EmptyCmd;
 
     var ast: Ast = .{
@@ -166,14 +171,15 @@ pub fn parse(gpa: Allocator, source: [:0]const u8, error_token: *[]const u8) Err
     if (tokens.len <= 1) return Error.EmptyCmd;
 
     var parser: Parser = .{
-        .source = source,
         .gpa = gpa,
+        .source = source,
         .tok_i = 0,
         .token_tags = tokens.items(.tag),
         .token_lexemes = tokens.items(.lexeme),
         .nodes = .{},
         .extra_data = .{},
         .scratch = .{},
+        .isBuiltin = Node.isBuiltin(Builtin),
     };
     defer parser.deinit();
 
@@ -333,7 +339,7 @@ pub fn extraData(tree: Ast, index: ExtraIndex, comptime T: type) T {
 fn testParse(source: [:0]const u8, expected: []const u8) !void {
     const allocator = std.testing.allocator;
     var error_token: []const u8 = undefined;
-    var tree = parse(allocator, source, &error_token) catch |err| switch (err) {
+    var tree = parse(enum { cd, exit }, allocator, source, &error_token) catch |err| switch (err) {
         error.EmptyCmd => return,
         else => return err,
     };
@@ -349,7 +355,7 @@ fn testParse(source: [:0]const u8, expected: []const u8) !void {
 fn testError(source: [:0]const u8) !void {
     const allocator = std.testing.allocator;
     var error_token: []const u8 = undefined;
-    var tree = parse(allocator, source, &error_token) catch return;
+    var tree = parse(enum { cd, exit }, allocator, source, &error_token) catch return;
     defer tree.deinit(allocator);
 
     unreachable;

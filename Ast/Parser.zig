@@ -19,6 +19,7 @@ token_lexemes: []const Token.Lexeme,
 nodes: Ast.NodeList,
 extra_data: std.ArrayListUnmanaged(u32),
 scratch: std.ArrayListUnmanaged(u32),
+isBuiltin: *const fn ([]const u8) bool,
 
 /// grammer:
 /// commandline → list
@@ -230,9 +231,8 @@ fn parseExec(p: *Parser) !Node.Index {
         }
     }
 
-    const is_builtin = std.meta.stringToEnum(Node.Builtin, p.token_lexemes[start]) != null;
     return p.addNode(.{
-        .tag = if (is_builtin) .builtin else .exec,
+        .tag = if (p.isBuiltin(p.token_lexemes[start])) .builtin else .exec,
         .data = .{ .token_range = .{
             .start = start,
             .end = p.tok_i,

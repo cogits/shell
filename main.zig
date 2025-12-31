@@ -18,7 +18,7 @@ const CmdError = error{OutOfMemory} ||
     posix.ForkError || posix.PipeError || posix.GetCwdError ||
     posix.OpenError || posix.ReadError || posix.WriteError;
 
-pub const Builtin = enum { cd, exit, echo, pwd, command };
+const Builtin = enum { cd, exit, echo, pwd, command };
 
 var arena_allocator: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
 const allocator = arena_allocator.allocator();
@@ -89,7 +89,7 @@ fn script(path: String) !void {
 fn runcmd(cmd: [:0]const u8, debug: bool) !u32 {
     // parse command
     var error_token: String = undefined;
-    var tree = Ast.parse(allocator, cmd, &error_token) catch |err| switch (err) {
+    var tree = Ast.parse(Builtin, allocator, cmd, &error_token) catch |err| switch (err) {
         error.EmptyCmd => return 0,
         error.TokenizeError, error.ParseError => {
             if (debug) {
