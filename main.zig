@@ -63,7 +63,7 @@ fn repl() !void {
         const prompt_color = if (status == 0) color.yellow else color.red;
         print("{s}{s}" ++ color.reset, .{ prompt_color, prompt });
 
-        const bytes = stdin.interface.takeDelimiterExclusive('\n') catch {
+        const bytes = try stdin.interface.takeDelimiter('\n') orelse {
             print("\n", .{});
             posix.exit(0);
         };
@@ -78,7 +78,7 @@ fn script(path: String) !void {
     defer file.close();
 
     var file_reader = file.reader(&cmd_buffer);
-    while (file_reader.interface.takeDelimiterExclusive('\n') catch null) |line| {
+    while (try file_reader.interface.takeDelimiter('\n')) |line| {
         _ = arena_allocator.reset(.retain_capacity); // This reclaims all allocations!
         cmd_buffer[line.len] = 0;
         const cmd: [:0]const u8 = cmd_buffer[0..line.len :0];
