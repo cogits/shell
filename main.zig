@@ -91,7 +91,7 @@ fn script(path: String) !void {
 fn runcmd(cmd: [:0]const u8, debug: bool) !u32 {
     // parse command
     var error_token: String = undefined;
-    var tree = Ast.parse(Builtin, allocator, cmd, &error_token) catch |err| switch (err) {
+    var tree = Ast.parse(allocator, cmd, &error_token) catch |err| switch (err) {
         error.EmptyCmd => return 0,
         error.TokenizeError, error.ParseError => {
             if (debug) {
@@ -106,35 +106,39 @@ fn runcmd(cmd: [:0]const u8, debug: bool) !u32 {
     defer tree.deinit(allocator);
 
     // run command
-    if (debug) std.log.debug("{f}", .{tree});
+    if (debug) std.debug.print("{f}\n", .{tree});
     return runnode(tree, .root, true);
 }
 
 fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!u32 {
+    const tag = tree.nodeTag(index);
+    const data = tree.nodeData(index);
+    const builtin_cmd: ?Builtin = bc: {
+        if (tag == .exec) {
+            const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];
+            if (std.meta.stringToEnum(Builtin, tokens[0])) |cmd| break :bc cmd;
+        }
+        break :bc null;
+    };
+
     // Process creation strategy:
     // - Root-level commands may need child processes (except builtins/lists)
     // - Nested commands always execute in current process
-    const tag = tree.nodeTag(index);
-    const state: enum { root, parent, child } = if (!root) .child else switch (tag) {
-        .list, .builtin, .@"and", .@"or" => .root,
-        else => if (try posix.fork() == 0) .child else .parent,
+    const state: enum { root, child } = if (!root) .child else if (builtin_cmd != null) .root else switch (tag) {
+        .list, .@"and", .@"or" => .root,
+        else => if (try posix.fork() == 0) .child else {
+            // Parent process cleanup: wait for any forked children
+            const ret = posix.waitpid(0, 0);
+            return ret.status;
+        },
     };
-
-    // Parent process cleanup: wait for any forked children
-    if (state == .parent) {
-        const ret = posix.waitpid(0, 0);
-        return ret.status;
-    }
 
     // Command execution logic (runs in either root shell or child process)
     var status: u32 = 0;
-    const data = tree.nodeData(index);
     switch (tag) {
         .list => {
             const cmds = tree.extraDataSlice(data.extra_range, Ast.Node.Index);
-            for (cmds) |cmd| {
-                status = try runnode(tree, cmd, state == .root);
-            }
+            for (cmds) |cmd| status = try runnode(tree, cmd, state == .root);
         },
         .@"and", .@"or" => {
             status = try runnode(tree, data.node_and_node[0], state == .root);
@@ -142,10 +146,10 @@ fn runnode(tree: Ast, index: Ast.Node.Index, root: bool) CmdError!u32 {
             if (tag == .@"or" and status == 0) return status;
             status = try runnode(tree, data.node_and_node[1], state == .root);
         },
-        .builtin, .exec => {
+        .exec => {
             const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];
-            if (tag == .builtin) {
-                status = try builtin(std.meta.stringToEnum(Builtin, tokens[0]).?, tokens[1..]);
+            if (builtin_cmd) |cmd| {
+                status = try builtin(cmd, tokens[1..]);
             } else {
                 execute(tokens);
             }

@@ -85,17 +85,7 @@ pub const Node = struct {
         files,
         /// `cmd arg1 arg2...`
         exec,
-        /// builtin command
-        builtin,
     };
-
-    pub fn isBuiltin(comptime T: type) fn ([]const u8) bool {
-        return struct {
-            pub fn inner(token: []const u8) bool {
-                return std.meta.stringToEnum(T, token) != null;
-            }
-        }.inner;
-    }
 
     pub const Data = union {
         node: Index,
@@ -125,7 +115,7 @@ pub const Node = struct {
                 "nodes[{}] nodes[extra[{}..][0..{}]]",
                 .{ @intFromEnum(data.node_and_extra[0]), @intFromEnum(data.node_and_extra[1]), std.meta.fields(Redirection).len },
             ),
-            .exec, .builtin => try w.print(
+            .exec => try w.print(
                 "tokens[{}..{}]",
                 .{ data.token_range.start, data.token_range.end },
             ),
@@ -140,7 +130,7 @@ pub const Node = struct {
 
 /// Result should be freed with tree.deinit() when there are
 /// no more references to any of the tokens or nodes.
-pub fn parse(Builtin: type, gpa: Allocator, source: [:0]const u8, error_token: *[]const u8) Error!Ast {
+pub fn parse(gpa: Allocator, source: [:0]const u8, error_token: *[]const u8) Error!Ast {
     if (source.len == 0) return Error.EmptyCmd;
 
     var ast: Ast = .{
@@ -179,7 +169,6 @@ pub fn parse(Builtin: type, gpa: Allocator, source: [:0]const u8, error_token: *
         .nodes = .{},
         .extra_data = .{},
         .scratch = .{},
-        .isBuiltin = Node.isBuiltin(Builtin),
     };
     defer parser.deinit();
 
@@ -279,7 +268,7 @@ fn print(tree: Ast, w: anytype, index: Node.Index) !void {
             }});
             try tree.print(w, data.node_and_node[1]);
         },
-        .exec, .builtin => {
+        .exec => {
             const tokens = tree.tokens.items(.lexeme)[data.token_range.start..data.token_range.end];
             try w.print("{s}", .{tokens[0]});
             for (tokens[1..]) |token| {
@@ -343,7 +332,7 @@ pub fn extraData(tree: Ast, index: ExtraIndex, comptime T: type) T {
 fn testParse(source: [:0]const u8, expected: []const u8) !void {
     const allocator = std.testing.allocator;
     var error_token: []const u8 = undefined;
-    var tree = parse(enum { cd, exit }, allocator, source, &error_token) catch |err| switch (err) {
+    var tree = parse(allocator, source, &error_token) catch |err| switch (err) {
         error.EmptyCmd => return,
         else => return err,
     };
@@ -359,7 +348,7 @@ fn testParse(source: [:0]const u8, expected: []const u8) !void {
 fn testError(source: [:0]const u8) !void {
     const allocator = std.testing.allocator;
     var error_token: []const u8 = undefined;
-    var tree = parse(enum { cd, exit }, allocator, source, &error_token) catch return;
+    var tree = parse(allocator, source, &error_token) catch return;
     defer tree.deinit(allocator);
 
     unreachable;
