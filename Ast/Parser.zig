@@ -17,8 +17,8 @@ tok_i: TokenIndex,
 token_tags: []const Token.Tag,
 token_lexemes: []const Token.Lexeme,
 nodes: Ast.NodeList,
-extra_data: std.ArrayListUnmanaged(u32),
-scratch: std.ArrayListUnmanaged(u32),
+extra_data: std.ArrayList(u32),
+scratch: std.ArrayList(u32),
 
 /// grammer:
 /// commandline → list

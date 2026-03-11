@@ -140,7 +140,7 @@ pub fn parse(gpa: Allocator, source: [:0]const u8, error_token: *[]const u8) Err
         .extra_data = undefined,
     };
 
-    var tokens: TokenList = .{};
+    var tokens: TokenList = .empty;
     defer tokens.deinit(gpa);
 
     // 4:1 ratio of source bytes to token count.
@@ -166,9 +166,9 @@ pub fn parse(gpa: Allocator, source: [:0]const u8, error_token: *[]const u8) Err
         .tok_i = 0,
         .token_tags = tokens.items(.tag),
         .token_lexemes = tokens.items(.lexeme),
-        .nodes = .{},
-        .extra_data = .{},
-        .scratch = .{},
+        .nodes = .empty,
+        .extra_data = .empty,
+        .scratch = .empty,
     };
     defer parser.deinit();
 
