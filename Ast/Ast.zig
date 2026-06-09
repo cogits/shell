@@ -49,7 +49,7 @@ pub const Node = struct {
         _,
 
         pub fn toOptional(i: Index) OptionalIndex {
-            const result: OptionalIndex = @enumFromInt(@intFromEnum(i));
+            const result: OptionalIndex = @fromBackingInt(@backingInt(i));
             assert(result != .none);
             return result;
         }
@@ -62,7 +62,7 @@ pub const Node = struct {
         _,
 
         pub fn unwrap(oi: OptionalIndex) ?Index {
-            return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+            return if (oi == .none) null else @fromBackingInt(@backingInt(oi));
         }
     };
 
@@ -101,6 +101,8 @@ pub const Node = struct {
         stdout_append: OptionalIndex,
         stderr: OptionalIndex,
         stderr_append: OptionalIndex,
+
+        pub const field_len = @typeInfo(@This()).@"struct".field_names.len;
     };
 
     pub fn format(node: Node, w: *Writer) !void {
@@ -109,11 +111,11 @@ pub const Node = struct {
         switch (node.tag) {
             .list, .files => |tag| try w.print(
                 "{s}[extra[{}..{}]]",
-                .{ if (tag == .list) "nodes" else "tokens", @intFromEnum(data.extra_range.start), @intFromEnum(data.extra_range.end) },
+                .{ if (tag == .list) "nodes" else "tokens", @backingInt(data.extra_range.start), @backingInt(data.extra_range.end) },
             ),
             .redir, .piped_redir => try w.print(
                 "nodes[{}] nodes[extra[{}..][0..{}]]",
-                .{ @intFromEnum(data.node_and_extra[0]), @intFromEnum(data.node_and_extra[1]), std.meta.fields(Redirection).len },
+                .{ @backingInt(data.node_and_extra[0]), @backingInt(data.node_and_extra[1]), Redirection.field_len },
             ),
             .exec => try w.print(
                 "tokens[{}..{}]",
@@ -121,9 +123,9 @@ pub const Node = struct {
             ),
             .@"and", .@"or", .pipe => try w.print(
                 "nodes[{}] nodes[{}]",
-                .{ @intFromEnum(data.node_and_node[0]), @intFromEnum(data.node_and_node[1]) },
+                .{ @backingInt(data.node_and_node[0]), @backingInt(data.node_and_node[1]) },
             ),
-            .back => try w.print("nodes[{}]", .{@intFromEnum(data.node)}),
+            .back => try w.print("nodes[{}]", .{@backingInt(data.node)}),
         }
     }
 };
@@ -212,7 +214,7 @@ pub fn format(tree: Ast, w: *Writer) !void {
     try w.print("nodes({}):\n", .{tree.nodes.len});
     for (0..tree.nodes.len) |i| {
         const node = tree.nodes.get(i);
-        try w.print("{: >3} => {f} => {f}\n", .{ i, node, tree.with(@enumFromInt(i)) });
+        try w.print("{: >3} => {f} => {f}\n", .{ i, node, tree.with(@fromBackingInt(@intCast(i))) });
     }
 
     // print extra_data
@@ -220,7 +222,7 @@ pub fn format(tree: Ast, w: *Writer) !void {
     try w.print("extra({}):\n", .{tree.extra_data.len});
     for (tree.extra_data, 0..) |extra, idx| {
         try w.print("{: >3} => ", .{idx});
-        if (extra == @intFromEnum(Node.OptionalIndex.none)) {
+        if (extra == @backingInt(Node.OptionalIndex.none)) {
             try w.writeAll("none\n");
         } else {
             try w.print("{}\n", .{extra});
@@ -283,8 +285,11 @@ fn print(tree: Ast, w: anytype, index: Node.Index) !void {
             try tree.print(w, data.node_and_extra[0]);
             const redir = tree.extraData(data.node_and_extra[1], Node.Redirection);
 
-            inline for (std.meta.fields(Node.Redirection), .{ "<", ">", ">>", "2>", "2>>" }) |field, symbol| {
-                const redir_node = @field(redir, field.name);
+            inline for (
+                @typeInfo(Ast.Node.Redirection).@"struct".field_names,
+                .{ "<", ">", ">>", "2>", "2>>" },
+            ) |field, symbol| {
+                const redir_node = @field(redir, field);
                 if (redir_node.unwrap()) |node| {
                     const files = tree.extraDataSlice(tree.nodeData(node).extra_range, TokenIndex);
                     const tokens = tree.tokens.items(.lexeme);
@@ -302,28 +307,28 @@ fn print(tree: Ast, w: anytype, index: Node.Index) !void {
 }
 
 pub fn nodeTag(tree: *const Ast, node: Node.Index) Node.Tag {
-    return tree.nodes.items(.tag)[@intFromEnum(node)];
+    return tree.nodes.items(.tag)[@backingInt(node)];
 }
 
 pub fn nodeData(tree: *const Ast, node: Node.Index) Node.Data {
-    return tree.nodes.items(.data)[@intFromEnum(node)];
+    return tree.nodes.items(.data)[@backingInt(node)];
 }
 
 pub fn extraDataSlice(tree: Ast, range: ExtraRange, comptime T: type) []const T {
-    return @ptrCast(tree.extra_data[@intFromEnum(range.start)..@intFromEnum(range.end)]);
+    return @ptrCast(tree.extra_data[@backingInt(range.start)..@backingInt(range.end)]);
 }
 
 pub fn extraData(tree: Ast, index: ExtraIndex, comptime T: type) T {
-    const fields = std.meta.fields(T);
+    const info = @typeInfo(T).@"struct";
     var result: T = undefined;
-    inline for (fields, 0..) |field, i| {
-        @field(result, field.name) = switch (field.type) {
+    inline for (info.field_names, info.field_types, 0..) |field_name, field_type, i| {
+        @field(result, field_name) = switch (field_type) {
             Node.Index,
             Node.OptionalIndex,
             ExtraIndex,
-            => @enumFromInt(tree.extra_data[@intFromEnum(index) + i]),
-            TokenIndex => tree.extra_data[@intFromEnum(index) + i],
-            else => @compileError("unexpected field type: " ++ @typeName(field.type)),
+            => @fromBackingInt(tree.extra_data[@backingInt(index) + i]),
+            TokenIndex => tree.extra_data[@backingInt(index) + i],
+            else => @compileError("unexpected field type: " ++ @typeName(field_type)),
         };
     }
     return result;

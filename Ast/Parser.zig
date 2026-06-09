@@ -47,11 +47,11 @@ pub fn deinit(p: *Parser) void {
 
 fn parseCmdLine(p: *Parser) !Node.Index {
     const list_range = try p.parseList();
-    const start: usize = @intFromEnum(list_range.start);
-    const end: usize = @intFromEnum(list_range.end);
+    const start: usize = @backingInt(list_range.start);
+    const end: usize = @backingInt(list_range.end);
     switch (end - start) {
         0 => return error.ParseError,
-        1 => return @enumFromInt(p.extra_data.pop().?),
+        1 => return @fromBackingInt(p.extra_data.pop().?),
         else => {},
     }
 
@@ -74,11 +74,11 @@ fn parseList(p: *Parser) !Ast.ExtraRange {
         const condition_node = try p.parseCondition();
         switch (p.token_tags[p.tok_i]) {
             .eof, .r_paren => {
-                try p.scratch.append(p.gpa, @intFromEnum(condition_node));
+                try p.scratch.append(p.gpa, @backingInt(condition_node));
                 break;
             },
             .semicolon => {
-                try p.scratch.append(p.gpa, @intFromEnum(condition_node));
+                try p.scratch.append(p.gpa, @backingInt(condition_node));
                 p.tok_i += 1;
                 continue;
             },
@@ -87,7 +87,7 @@ fn parseList(p: *Parser) !Ast.ExtraRange {
                     .tag = .back,
                     .data = .{ .node = condition_node },
                 });
-                try p.scratch.append(p.gpa, @intFromEnum(back_node));
+                try p.scratch.append(p.gpa, @backingInt(back_node));
                 p.tok_i += 1;
                 continue;
             },
@@ -144,8 +144,8 @@ fn parseRedir(p: *Parser) !Node.Index {
     const redir_token_tags: [5]Token.Tag = .{ .stdin, .stdout, .stdout_append, .stderr, .stderr_append };
 
     // splitting the file_range into five possible redirect types
-    var tok_i: u32 = @intFromEnum(file_range.start);
-    const tok_end: usize = @intFromEnum(file_range.end);
+    var tok_i: u32 = @backingInt(file_range.start);
+    const tok_end: usize = @backingInt(file_range.end);
     for (redir_token_tags) |tag| {
         var start: ?Ast.ExtraIndex = null;
         var end: ?Ast.ExtraIndex = null;
@@ -153,25 +153,25 @@ fn parseRedir(p: *Parser) !Node.Index {
         for (p.extra_data.items[tok_i..tok_end]) |item| {
             if (p.token_tags[item - 1] != tag) {
                 if (start != null)
-                    end = @enumFromInt(tok_i);
+                    end = @fromBackingInt(tok_i);
                 break;
             }
 
             if (start == null)
-                start = @enumFromInt(tok_i);
+                start = @fromBackingInt(tok_i);
             tok_i += 1;
         }
 
         const file_node: ?Node.Index = if (start) |s|
             try p.addNode(.{ .tag = .files, .data = .{ .extra_range = .{
                 .start = s,
-                .end = end orelse @enumFromInt(tok_i),
+                .end = end orelse @fromBackingInt(tok_i),
             } } })
         else
             null;
 
         const redir_i: Node.OptionalIndex = if (file_node) |node| node.toOptional() else .none;
-        try p.scratch.append(p.gpa, @intFromEnum(redir_i));
+        try p.scratch.append(p.gpa, @backingInt(redir_i));
     }
 
     const items = p.scratch.items[scratch_top..];
@@ -211,7 +211,7 @@ fn parseFiles(p: *Parser) !?Ast.ExtraRange {
 
     const S = struct {
         pub fn lessThan(token_tags: []const Token.Tag, a: TokenIndex, b: TokenIndex) bool {
-            return @intFromEnum(token_tags[a - 1]) < @intFromEnum(token_tags[b - 1]);
+            return @backingInt(token_tags[a - 1]) < @backingInt(token_tags[b - 1]);
         }
     };
 
@@ -248,13 +248,13 @@ fn parseBlock(p: *Parser) Error!Node.Index {
 fn listToSpan(p: *Parser, list: anytype) !Ast.ExtraRange {
     try p.extra_data.appendSlice(p.gpa, @ptrCast(list));
     return .{
-        .start = @enumFromInt(p.extra_data.items.len - list.len),
-        .end = @enumFromInt(p.extra_data.items.len),
+        .start = @fromBackingInt(@intCast(p.extra_data.items.len - list.len)),
+        .end = @fromBackingInt(@intCast(p.extra_data.items.len)),
     };
 }
 
 fn addNode(p: *Parser, elem: Node) !Node.Index {
-    const result: Node.Index = @enumFromInt(p.nodes.len);
+    const result: Node.Index = @fromBackingInt(@intCast(p.nodes.len));
     try p.nodes.append(p.gpa, elem);
     return result;
 }

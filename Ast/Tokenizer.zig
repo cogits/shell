@@ -53,7 +53,7 @@ pub fn next(self: *Tokenizer) Token {
             if (self.index + 2 < self.buffer.len and self.buffer[self.index + 2] == '>') 3 else 2
         else
             std.mem.indexOfAny(u8, self.buffer[self.index..], whitespace ++ symbols) orelse
-                self.buffer.len - self.index,
+                (self.buffer.len - self.index),
     };
 
     result.lexeme = self.buffer[self.index .. self.index + end];
