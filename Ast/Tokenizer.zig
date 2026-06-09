@@ -2,12 +2,12 @@ const Tokenizer = @This();
 const std = @import("std");
 
 index: usize,
-buffer: [:0]const u8,
+buffer: []const u8,
 
 const whitespace = " \t\r\n\x0b";
 const symbols = "<|>&;()";
 
-pub fn init(buffer: [:0]const u8) Tokenizer {
+pub fn init(buffer: []const u8) Tokenizer {
     return .{
         .buffer = buffer,
         .index = 0,
@@ -28,11 +28,12 @@ pub fn next(self: *Tokenizer) Token {
         }
     }
 
+    if (self.index >= self.buffer.len) return result;
+
     var tag: ?Token.Tag = null;
     const end: usize = switch (self.buffer[self.index]) {
-        0 => return result,
         '\'', '"' => |char| blk: {
-            if (self.buffer[self.index + 1] != 0) {
+            if (self.index + 1 < self.buffer.len) {
                 if (std.mem.indexOfScalar(u8, self.buffer[self.index + 1 ..], char)) |end| {
                     tag = .string;
                     self.index += 1;
@@ -47,9 +48,9 @@ pub fn next(self: *Tokenizer) Token {
                 self.buffer.len - self.index;
         },
         ';', '<', '(', ')' => 1,
-        '>', '&', '|' => |char| if (self.buffer[self.index + 1] == char) 2 else 1,
-        else => |char| if (char == '2' and self.buffer[self.index + 1] == '>')
-            if (self.buffer[self.index + 2] == '>') 3 else 2
+        '>', '&', '|' => |char| if (self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == char) 2 else 1,
+        else => |char| if (char == '2' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '>')
+            if (self.index + 2 < self.buffer.len and self.buffer[self.index + 2] == '>') 3 else 2
         else
             std.mem.indexOfAny(u8, self.buffer[self.index..], whitespace ++ symbols) orelse
                 self.buffer.len - self.index,
@@ -105,7 +106,7 @@ pub const Token = struct {
     }
 };
 
-fn testTokenize(source: [:0]const u8, expected_token_tags: []const Token.Tag) !void {
+fn testTokenize(source: []const u8, expected_token_tags: []const Token.Tag) !void {
     var tokenizer = Tokenizer.init(source);
     for (expected_token_tags) |expected_token_tag| {
         const token = tokenizer.next();

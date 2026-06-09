@@ -19,7 +19,7 @@ io: Io,
 tree: Ast,
 allocator: Allocator,
 
-pub fn init(io: Io, allocator: Allocator, cmd: [:0]const u8, error_token: *String) !Command {
+pub fn init(io: Io, allocator: Allocator, cmd: []const u8, error_token: *String) !Command {
     const tree = Ast.parse(allocator, cmd, error_token) catch |err| switch (err) {
         error.EmptyCmd => return error.EmptyCmd,
         else => return err,

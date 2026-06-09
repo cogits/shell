@@ -58,8 +58,7 @@ fn repl(io: Io, arena: *std.heap.ArenaAllocator, terminal: Terminal) !void {
             std.process.exit(0);
         };
         const offset = @intFromPtr(bytes.ptr) - @intFromPtr(&cmd_buffer);
-        cmd_buffer[offset + bytes.len] = 0;
-        const cmd: [:0]const u8 = cmd_buffer[offset .. offset + bytes.len :0];
+        const cmd: []const u8 = cmd_buffer[offset .. offset + bytes.len];
 
         ok = true;
         var err_token: ?[]const u8 = null;
@@ -85,8 +84,7 @@ fn script(io: Io, arena: *std.heap.ArenaAllocator, path: []const u8) !void {
     var line_no: usize = 1;
     while (try file_reader.interface.takeDelimiter('\n')) |line| {
         const offset = @intFromPtr(line.ptr) - @intFromPtr(&cmd_buffer);
-        cmd_buffer[offset + line.len] = 0;
-        const cmd: [:0]const u8 = cmd_buffer[offset .. offset + line.len :0];
+        const cmd: []const u8 = cmd_buffer[offset .. offset + line.len];
         _ = arena.reset(.retain_capacity);
         var err_token: ?[]const u8 = null;
         runcmd(io, allocator, cmd, &err_token) catch {
@@ -98,7 +96,7 @@ fn script(io: Io, arena: *std.heap.ArenaAllocator, path: []const u8) !void {
     }
 }
 
-fn runcmd(io: Io, allocator: std.mem.Allocator, string: [:0]const u8, err_token: *?[]const u8) !void {
+fn runcmd(io: Io, allocator: std.mem.Allocator, string: []const u8, err_token: *?[]const u8) !void {
     var parse_error_token: []const u8 = undefined;
     var cmd = Command.init(io, allocator, string, &parse_error_token) catch |err| switch (err) {
         error.EmptyCmd => return,

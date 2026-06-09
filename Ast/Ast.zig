@@ -11,7 +11,7 @@ pub const Token = Tokenizer.Token;
 pub const Error = error{ EmptyCmd, TokenizeError } || Parser.Error;
 
 /// Reference to externally-owned data.
-source: [:0]const u8,
+source: []const u8,
 
 tokens: TokenList.Slice,
 /// The root AST node is assumed to be index 0.
@@ -130,7 +130,7 @@ pub const Node = struct {
 
 /// Result should be freed with tree.deinit() when there are
 /// no more references to any of the tokens or nodes.
-pub fn parse(gpa: Allocator, source: [:0]const u8, error_token: *[]const u8) Error!Ast {
+pub fn parse(gpa: Allocator, source: []const u8, error_token: *[]const u8) Error!Ast {
     if (source.len == 0) return Error.EmptyCmd;
 
     var ast: Ast = .{
@@ -329,7 +329,7 @@ pub fn extraData(tree: Ast, index: ExtraIndex, comptime T: type) T {
     return result;
 }
 
-fn testParse(source: [:0]const u8, expected: []const u8) !void {
+fn testParse(source: []const u8, expected: []const u8) !void {
     const allocator = std.testing.allocator;
     var error_token: []const u8 = undefined;
     var tree = parse(allocator, source, &error_token) catch |err| switch (err) {
@@ -345,7 +345,7 @@ fn testParse(source: [:0]const u8, expected: []const u8) !void {
     try std.testing.expectEqualStrings(expected, buffer.items);
 }
 
-fn testError(source: [:0]const u8) !void {
+fn testError(source: []const u8) !void {
     const allocator = std.testing.allocator;
     var error_token: []const u8 = undefined;
     var tree = parse(allocator, source, &error_token) catch return;

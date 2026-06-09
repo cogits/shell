@@ -32,7 +32,7 @@ const TmpPath = struct {
 
 fn testcmd(comptime fmt: []const u8, args: anytype) !void {
     var cmd_buf: [512:0]u8 = undefined;
-    const cmd_str = try std.fmt.bufPrintSentinel(&cmd_buf, fmt, args, 0);
+    const cmd_str = try std.fmt.bufPrint(&cmd_buf, fmt, args);
 
     var error_token: []const u8 = undefined;
     var cmd = Command.init(io, allocator, cmd_str, &error_token) catch |err| switch (err) {
