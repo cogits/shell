@@ -32,7 +32,7 @@ pub fn deinit(self: *Command) void {
 }
 
 pub fn run(self: *Command) CmdError!void {
-    std.log.debug("{f}\n", .{self.tree});
+    std.log.debug("\n{f}\n", .{self.tree});
     try self.runNode(.root, true);
 }
 
@@ -118,9 +118,9 @@ fn runBuiltin(self: *Command, tag: Builtin, tokens: []const String) CmdError!voi
             c.exit(n);
         },
         .echo => {
-            for (tokens, 0..) |token, i| {
-                if (i > 0) self.print(" ", .{});
-                self.print("{s}", .{token});
+            if (tokens.len > 0) {
+                self.print("{s}", .{tokens[0]});
+                for (tokens[1..]) |token| self.print(" {s}", .{token});
             }
             self.print("\n", .{});
         },
@@ -261,7 +261,7 @@ fn redirectIo(
     // stderr before stderr_append, so TRUNC opens before APPEND within
     // a single IO process.
     inline for (
-        std.meta.fields(Ast.Node.Redirection),
+        @typeInfo(Ast.Node.Redirection).@"struct".field_names,
         [_]c.O{
             .{ .ACCMODE = .RDONLY },
             .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true },
@@ -273,7 +273,7 @@ fn redirectIo(
     ) |field, flags, i| {
         if (idx != i) continue;
 
-        if (@field(redir, field.name).unwrap()) |node| {
+        if (@field(redir, field).unwrap()) |node| {
             const files = self.tree.extraDataSlice(self.tree.nodeData(node).extra_range, Ast.TokenIndex);
             const tokens = self.tree.tokens.items(.lexeme);
 
@@ -328,7 +328,7 @@ fn execute(allocator: Allocator, tokens: []const String) noreturn {
     execTokens(allocator, tokens) catch |err| switch (err) {
         error.TooBig => std.log.err("sh: too many args\n", .{}),
         error.FileNotFound => std.log.err("{s}: command not found\n", .{tokens[0]}),
-        else => std.log.err("exec {s} failed\n", .{tokens[0]}),
+        else => |e| std.log.err("exec {s} failed: {t}\n", .{ tokens[0], e }),
     };
     c.exit(1);
 }

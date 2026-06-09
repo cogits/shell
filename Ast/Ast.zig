@@ -101,6 +101,8 @@ pub const Node = struct {
         stdout_append: OptionalIndex,
         stderr: OptionalIndex,
         stderr_append: OptionalIndex,
+
+        pub const field_len = @typeInfo(@This()).@"struct".field_names.len;
     };
 
     pub fn format(node: Node, w: *Writer) !void {
@@ -113,7 +115,7 @@ pub const Node = struct {
             ),
             .redir, .piped_redir => try w.print(
                 "nodes[{}] nodes[extra[{}..][0..{}]]",
-                .{ @intFromEnum(data.node_and_extra[0]), @intFromEnum(data.node_and_extra[1]), std.meta.fields(Redirection).len },
+                .{ @intFromEnum(data.node_and_extra[0]), @intFromEnum(data.node_and_extra[1]), Redirection.field_len },
             ),
             .exec => try w.print(
                 "tokens[{}..{}]",
@@ -283,8 +285,11 @@ fn print(tree: Ast, w: anytype, index: Node.Index) !void {
             try tree.print(w, data.node_and_extra[0]);
             const redir = tree.extraData(data.node_and_extra[1], Node.Redirection);
 
-            inline for (std.meta.fields(Node.Redirection), .{ "<", ">", ">>", "2>", "2>>" }) |field, symbol| {
-                const redir_node = @field(redir, field.name);
+            inline for (
+                @typeInfo(Ast.Node.Redirection).@"struct".field_names,
+                .{ "<", ">", ">>", "2>", "2>>" },
+            ) |field, symbol| {
+                const redir_node = @field(redir, field);
                 if (redir_node.unwrap()) |node| {
                     const files = tree.extraDataSlice(tree.nodeData(node).extra_range, TokenIndex);
                     const tokens = tree.tokens.items(.lexeme);
@@ -314,16 +319,16 @@ pub fn extraDataSlice(tree: Ast, range: ExtraRange, comptime T: type) []const T 
 }
 
 pub fn extraData(tree: Ast, index: ExtraIndex, comptime T: type) T {
-    const fields = std.meta.fields(T);
+    const info = @typeInfo(T).@"struct";
     var result: T = undefined;
-    inline for (fields, 0..) |field, i| {
-        @field(result, field.name) = switch (field.type) {
+    inline for (info.field_names, info.field_types, 0..) |field_name, field_type, i| {
+        @field(result, field_name) = switch (field_type) {
             Node.Index,
             Node.OptionalIndex,
             ExtraIndex,
             => @enumFromInt(tree.extra_data[@intFromEnum(index) + i]),
             TokenIndex => tree.extra_data[@intFromEnum(index) + i],
-            else => @compileError("unexpected field type: " ++ @typeName(field.type)),
+            else => @compileError("unexpected field type: " ++ @typeName(field_type)),
         };
     }
     return result;
