@@ -12,8 +12,8 @@ const PIPESIZE = 64;
 const FdList = std.ArrayList(c.fd_t);
 const RedirList = struct { pipe: [2]c.fd_t, fds: FdList = .empty };
 
-const CmdError = error{ OutOfMemory, PipeFailed, CmdFailed, BuiltinFailed };
-const Builtin = enum { cd, exit, echo, pwd, command };
+const CmdError = error{ OutOfMemory, PipeFailed, CmdFailed };
+const Builtin = enum { cd, exit, echo, pwd, command, true, false };
 
 io: Io,
 tree: Ast,
@@ -104,13 +104,13 @@ fn runBuiltin(self: *Command, tag: Builtin, tokens: []const String) CmdError!voi
         .cd => {
             if (tokens.len == 0) {
                 std.log.err("cd: missing argument\n", .{});
-                return error.BuiltinFailed;
+                return error.CmdFailed;
             }
             const path = try self.allocator.dupeSentinel(u8, tokens[0], 0);
             defer self.allocator.free(path);
             if (c.chdir(path) != 0) {
                 std.log.err("cd: {s}: No such file or directory\n", .{tokens[0]});
-                return error.BuiltinFailed;
+                return error.CmdFailed;
             }
         },
         .exit => {
@@ -136,6 +136,8 @@ fn runBuiltin(self: *Command, tag: Builtin, tokens: []const String) CmdError!voi
             const s = wait();
             if (s != 0) return error.CmdFailed;
         },
+        .true => {},
+        .false => return error.CmdFailed,
     }
 }
 
@@ -151,7 +153,7 @@ fn pipe(self: *Command, nodes: [2]Ast.Node.Index) CmdError!noreturn {
             _ = c.dup2(p[fd], fd);
             _ = c.close(p[0]);
             _ = c.close(p[1]);
-            _ = self.runNode(cmd, false) catch @as(u32, 1);
+            self.runNode(cmd, false) catch c.exit(1);
             c.exit(0);
         }
         child_pids[i] = pid;
