@@ -67,6 +67,43 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_shell_tests.step);
 
+    // Grammar oracle. These files live in tests/ on purpose: they are test-only
+    // and are not listed in build.zig.zon .paths, so they are not shipped to
+    // downstream users of the package. The generated parser is written to the
+    // build cache and imported as a module; it is never stored in the source
+    // tree.
+    const oracle_tool = b.addExecutable(.{
+        .name = "gen_parser_oracle",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/gen_parser_oracle.zig"),
+            .target = b.graph.host,
+        }),
+    });
+
+    const gen_oracle_run = b.addRunArtifact(oracle_tool);
+    gen_oracle_run.addFileArg(b.path("tests/grammar.peg"));
+    const oracle_file = gen_oracle_run.addOutputFileArg("parser_generated_oracle.zig");
+
+    const oracle_module = b.createModule(.{
+        .root_source_file = oracle_file,
+    });
+
+    const oracle_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/parser_oracle_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+        // Coverage instrumentation for the fuzzer currently requires the LLVM
+        // backend.
+        .use_llvm = true,
+    });
+    oracle_tests.root_module.addImport("Ast", ast_module);
+    oracle_tests.root_module.addImport("grammar_oracle", oracle_module);
+    const run_oracle_tests = b.addRunArtifact(oracle_tests);
+
+    test_step.dependOn(&run_oracle_tests.step);
+
     // release
     const release_step = b.step("release", "Build for multiple targets to make a release");
     for (targets) |t| {

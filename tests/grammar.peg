@@ -1,0 +1,47 @@
+# Shell command grammar - token-level acceptance oracle.
+#
+# The generated parser is fed one byte per token. The bytes are produced by
+# tests/parser_oracle_test.zig from the token tags emitted by
+# Ast/Tokenizer.zig:
+#
+#   'S' string        '(' l_paren      ')' r_paren     ';' semicolon
+#   '&' ampersand     'A' &&           'O' ||          '|' pipe
+#   '<' stdin         '>' stdout       'R' >>          '2' 2>          'E' 2>>
+#
+# Lexical errors (invalid tokens) are rejected by the test harness before this
+# parser is invoked. eof is not part of the input; end of input is expressed
+# with the eof rule.
+#
+# This is an acceptance oracle only: it checks whether a token sequence is
+# accepted, not the shape of the resulting AST.
+#
+# Keep the syntax LL(1) at the token level. Ordinary PEG backtracking can
+# implement more than that, but unbounded lookahead makes the oracle useless as
+# a check on the handwritten recursive descent parser.
+
+Root <- CommandLine eof
+      / eof
+
+CommandLine <- List
+
+List <- Condition (ListSep Condition)* ListSep?
+
+ListSep <- ';' / '&'
+
+Condition <- Pipeline ConditionTail*
+ConditionTail <- (AndOp / OrOp) Pipeline
+AndOp <- 'A'
+OrOp <- 'O'
+
+Pipeline <- Redirection (Pipe Redirection)*
+Pipe <- '|'
+
+Redirection <- Command (RedirOp STRING)*
+RedirOp <- '<' / 'R' / '>' / '2' / 'E'
+
+Command <- '(' CommandLine ')'
+         / STRING+
+
+STRING <- 'S'
+
+eof <- !.

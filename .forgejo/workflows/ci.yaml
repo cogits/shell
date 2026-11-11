@@ -1,7 +1,7 @@
 on: [push]
 jobs:
   test:
-    runs-on: codeberg-tiny
+    runs-on: codeberg-small
     steps:
       - name: Check out
         uses: https://github.com/actions/checkout@v4
@@ -12,6 +12,10 @@ jobs:
       - name: Run test
         run: |
           zig build test
+
+      - name: Fuzz parser against grammar oracle
+        run: |
+          zig build test --fuzz=20K
 
       - name: Build shell
         run: |

@@ -6,7 +6,7 @@ const Writer = std.Io.Writer;
 const Allocator = std.mem.Allocator;
 
 const Parser = @import("Parser.zig");
-const Tokenizer = @import("Tokenizer.zig");
+pub const Tokenizer = @import("Tokenizer.zig");
 pub const Token = Tokenizer.Token;
 pub const Error = error{ EmptyCmd, TokenizeError } || Parser.Error;
 
